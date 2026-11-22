@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -152,9 +153,10 @@ fun AuthGateScreen(
             Button(
               onClick = onSignInClick,
               enabled = !isBusy,
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
               modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .heightIn(min = 52.dp)
                 .testTag("google_sign_in_button")
             ) {
               if (isBusy) {
@@ -166,7 +168,10 @@ fun AuthGateScreen(
               } else {
                 Icon(Icons.Default.VerifiedUser, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("تسجيل الدخول بحساب الإدارة (Google)")
+                Text(
+                  text = "تسجيل الدخول بحساب الإدارة (Google)",
+                  textAlign = TextAlign.Center
+                )
               }
             }
           }
@@ -335,14 +340,15 @@ fun MonitorTab(
             )
             Button(
               onClick = onRequestPermissions,
+              contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
               modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .heightIn(min = 48.dp)
                 .testTag("grant_sms_permissions_button")
             ) {
               Icon(Icons.Default.Security, contentDescription = null)
               Spacer(Modifier.width(8.dp))
-              Text("منح صلاحيات الرسائل والإشعارات")
+              Text("منح صلاحيات الرسائل والإشعارات", textAlign = TextAlign.Center)
             }
           }
         }
@@ -846,14 +852,15 @@ private fun PendingOrderCard(
       Button(
         onClick = onVerifyClick,
         enabled = !isBusy,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         modifier = Modifier
           .fillMaxWidth()
-          .height(48.dp)
+          .heightIn(min = 48.dp)
           .testTag("manual_verify_order_${order.orderId}")
       ) {
         Icon(Icons.Default.CheckCircle, contentDescription = null)
         Spacer(Modifier.width(6.dp))
-        Text("تأكيد الدفع ونقل الطلب إلى «$stageLabel»")
+        Text("تأكيد الدفع ونقل الطلب إلى «$stageLabel»", textAlign = TextAlign.Center)
       }
     }
   }

@@ -9,7 +9,6 @@ import com.google.firebase.firestore.FirebaseFirestore
 
 object FirebaseInitializer {
 
-  private const val APP_NAME = "AlemanCashCompanion"
   const val FIRESTORE_DATABASE_ID = "ai-studio-android-08e4f24d-823a-4020-a9a2-1cd3da356058"
   private const val PROJECT_ID = "gen-lang-client-0678605325"
   private const val APP_ID = "1:38745949638:android:d1f10e835fc5dd3c26dec7"
@@ -26,7 +25,8 @@ object FirebaseInitializer {
     synchronized(this) {
       cachedApp?.let { return it }
       val appContext = context.applicationContext
-      val existing = FirebaseApp.getApps(appContext).firstOrNull { it.name == APP_NAME }
+      val existing = FirebaseApp.getApps(appContext)
+        .firstOrNull { it.name == FirebaseApp.DEFAULT_APP_NAME }
       if (existing != null) {
         cachedApp = existing
         return existing
@@ -39,7 +39,7 @@ object FirebaseInitializer {
         .setGcmSenderId(PROJECT_NUMBER)
         .setStorageBucket(STORAGE_BUCKET)
         .build()
-      val created = FirebaseApp.initializeApp(appContext, options, APP_NAME)
+      val created = FirebaseApp.initializeApp(appContext, options)
       cachedApp = created
       return created
     }

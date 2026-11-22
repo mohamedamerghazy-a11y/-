@@ -19,16 +19,37 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK and Licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
 
-      - name: Accept Android SDK Licenses
-        run: yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          SDK_MANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDK_MANAGER" ]; then
+            SDK_MANAGER="$(find "$SDK_ROOT" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)"
+          fi
 
-      - name: Set up Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.3.1'
+          if [ -z "$SDK_MANAGER" ]; then
+            echo "Downloading Android command-line tools..."
+            mkdir -p "$SDK_ROOT/cmdline-tools"
+            curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/cmdline-tools.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract
+            mv /tmp/cmdline-tools-extract/cmdline-tools "$SDK_ROOT/cmdline-tools/latest"
+            SDK_MANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+
+          echo "Using sdkmanager: $SDK_MANAGER"
+          yes | "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null 2>&1 || true
+          "$SDK_MANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "platforms;android-36.1" || true
+          yes | "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null 2>&1 || true
+
+      - name: Install Gradle 9.3.1
+        run: |
+          curl -fsSL "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip" -o /tmp/gradle-9.3.1.zip
+          unzip -q /tmp/gradle-9.3.1.zip -d /tmp
+          echo "/tmp/gradle-9.3.1/bin" >> "$GITHUB_PATH"
+          /tmp/gradle-9.3.1/bin/gradle --version
 
       - name: Build Al-Eman Cash Debug APK
         working-directory: aleman-cash-app

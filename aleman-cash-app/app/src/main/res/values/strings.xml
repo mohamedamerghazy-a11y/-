@@ -1,4 +1,5 @@
 <resources>
   <string name="app_name">الإيمان كاش</string>
   <string name="app_tagline">التحقق التلقائي من رسائل الدفع وربطها بطلبات متجر الإيمان</string>
+  <string name="default_web_client_id" translatable="false">38745949638-08s3n5qe1g7k0fnlf37cd8h8vdehak57.apps.googleusercontent.com</string>
 </resources>

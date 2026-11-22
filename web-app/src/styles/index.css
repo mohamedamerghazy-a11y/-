@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Tajawal", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --color-primary-yellow: #FFD000;
+  --color-primary-yellow-dark: #E5B800;
+  --color-primary-yellow-soft: #FFF9DB;
+  --color-charcoal: #181A20;
+  --color-charcoal-soft: #282B33;
+  --color-bg-general: #F9FAFB;
+  --color-border-neutral: #EBECEF;
+  --color-text-secondary: #717784;
+  --color-discount-red: #E53935;
+  --color-discount-red-soft: #FDECEC;
+  --color-success-green: #219653;
+  --color-success-green-soft: #E8F6EE;
+  --color-royal-blue: #1565C0;
+  --color-royal-blue-soft: #EBF4FF;
+}
+
+@layer base {
+  html,
+  body {
+    font-family: "Tajawal", ui-sans-serif, system-ui, sans-serif;
+    background-color: #F9FAFB;
+    color: #181A20;
+    overflow-x: hidden;
+  }
+
+  button,
+  a,
+  select,
+  summary {
+    cursor: pointer;
+  }
+}
+
+/* Custom clean scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d7de;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a5aab5;
+}
+
+/* Hide scrollbar for clean horizontal store strips */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Cut-corner polygon utility for categories */
+.clip-cut-corner {
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+
+.clip-hexagon {
+  clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%);
+}
+
+/* Smooth infinite Left-to-Right marquee animation for Announcement Ticker */
+@keyframes ticker-marquee-ltr {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0%, 0, 0);
+  }
+}
+
+.animate-ticker-ltr {
+  display: inline-flex;
+  width: max-content;
+  will-change: transform;
+  animation: ticker-marquee-ltr var(--ticker-duration, 22s) linear infinite;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #thermal-print-area,
+  #thermal-print-area * {
+    visibility: visible !important;
+  }
+  #thermal-print-area {
+    position: absolute;
+    inset: 0;
+    margin: 0 auto;
+    background: #fff !important;
+  }
+}

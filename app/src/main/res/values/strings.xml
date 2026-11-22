@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">الإيمان للتجارة</string>
+    <string name="brand_tagline">تسوق بذكاء .. عيش أفضل</string>
+
+    <!-- التنقل الرئيسي للعملاء -->
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_categories">الفئات</string>
+    <string name="nav_search">البحث</string>
+    <string name="nav_cart">السلة</string>
+    <string name="nav_account">حسابي</string>
+
+    <!-- واجهة المتجر بنمط نون -->
+    <string name="search_placeholder">أنت بتدور على إيه؟</string>
+    <string name="delivery_bar_prompt">التوصيل إلى: اختر عنوان التوصيل</string>
+    <string name="account_mode_retail">أسعار القطاعي</string>
+    <string name="hero_badge">عروض القطاعي والجملة</string>
+    <string name="hero_title">كل ما تحتاجه بأفضل سعر للجملة والقطاعي</string>
+    <string name="hero_subtitle">تصفح الأقسام وتابع العروض اليومية مع توصيل سريع لكل المناطق.</string>
+    <string name="hero_cta">تسوق الآن</string>
+
+    <string name="section_featured">المنتجات المميزة</string>
+    <string name="section_newest">وصل حديثًا</string>
+    <string name="section_bestsellers">الأكثر مبيعًا</string>
+    <string name="section_deals">العروض والخصومات</string>
+    <string name="section_see_all">تسوق الكل</string>
+
+    <string name="catalog_empty_title">لا توجد منتجات مضافة حتى الآن</string>
+    <string name="catalog_empty_desc">سيتم عرض المنتجات والأقسام والعروض هنا فور إضافتها من لوحة إدارة المتجر.</string>
+    <string name="categories_empty_title">لا توجد أقسام مضافة بعد</string>
+    <string name="categories_empty_desc">ستظهر الأقسام الرئيسية والفرعية هنا بمجرد إنشائها من إدارة الأقسام.</string>
+    <string name="search_empty_title">ابحث في آلاف المنتجات</string>
+    <string name="search_empty_desc">اكتب اسم المنتج أو القسم أو رمز الصنف أو الباركود، واستخدم الفلاتر للوصول الأسرع.</string>
+    <string name="cart_empty_title">عربة التسوق فارغة</string>
+    <string name="cart_empty_desc">ابدأ التسوق وأضف المنتجات التي تحتاجها بالقطاعي أو الجملة.</string>
+    <string name="shop_now">تسوق الآن</string>
+
+    <!-- الحساب والإدارة -->
+    <string name="account_guest_title">مرحبًا بك في الإيمان للتجارة</string>
+    <string name="account_guest_subtitle">سجّل الدخول لمتابعة طلباتك وإدارة العناوين وطلب أسعار الجملة.</string>
+    <string name="admin_panel_title">لوحة إدارة المتجر</string>
+    <string name="admin_panel_subtitle">إدارة المبيعات والمنتجات والطلبات</string>
+    <string name="back_button_desc">رجوع</string>
+</resources>

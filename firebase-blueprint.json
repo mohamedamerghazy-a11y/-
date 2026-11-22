@@ -1,0 +1,553 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "ملف المستخدم والحساب التجاري (قطاعي أو جملة) وصلاحيات الدور.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "معرف المستخدم في Firebase Auth" },
+        "fullName": { "type": "string", "description": "الاسم الكامل للعميل أو الموظف" },
+        "email": { "type": "string", "format": "email", "description": "البريد الإلكتروني المسجل" },
+        "phone": { "type": "string", "description": "رقم الهاتف للتواصل والتوصيل" },
+        "photoUrl": { "type": "string", "description": "رابط الصورة الشخصية" },
+        "accountType": { "type": "string", "enum": ["retail", "wholesale"] },
+        "wholesaleStatus": { "type": "string", "enum": ["none", "pending", "approved", "rejected"] },
+        "wholesaleCompanyName": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": [
+            "customer",
+            "owner",
+            "manager",
+            "product_manager",
+            "order_manager",
+            "inventory_manager",
+            "accountant",
+            "customer_service",
+            "delivery_driver"
+          ]
+        },
+        "lastOrderId": { "type": "string", "description": "معرف آخر طلب منفذ للربط المعاملي الآمن" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "email", "accountType", "wholesaleStatus", "role", "createdAt", "updatedAt"]
+    },
+    "DeliveryAddress": {
+      "title": "DeliveryAddress",
+      "description": "عنوان توصيل محفوظ للعميل.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "label": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "phone": { "type": "string" },
+        "governorate": { "type": "string" },
+        "city": { "type": "string" },
+        "streetAddress": { "type": "string" },
+        "landmark": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "isDefault": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "label", "recipientName", "phone", "governorate", "city", "streetAddress", "isDefault", "createdAt", "updatedAt"]
+    },
+    "CartItem": {
+      "title": "CartItem",
+      "description": "عنصر في عربة تسوق العميل المسجل.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "quantity": { "type": "integer" },
+        "flashSaleId": { "type": "string" },
+        "selectedColor": { "type": "string" },
+        "selectedSize": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "productId", "quantity", "updatedAt"]
+    },
+    "WishlistItem": {
+      "title": "WishlistItem",
+      "description": "منتج مفضل محفوظ بحساب العميل.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "productId", "createdAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "سجل صلاحيات المديرين.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "createdAt"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "بيانات الموظف وصلاحياته المعينة من مالك المتجر.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "manager",
+            "product_manager",
+            "order_manager",
+            "inventory_manager",
+            "accountant",
+            "customer_service",
+            "delivery_driver"
+          ]
+        },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "email", "role", "permissions", "isActive", "createdAt", "updatedAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "قسم رئيسي أو فرعي في متجر الإيمان للتجارة.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "parentId": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "displayOrder": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "displayOrder", "isActive", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "منتج معروض للبيع بالقطاعي والجملة مع تفاصيل المخزون والصور.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "subCategoryId": { "type": "string" },
+        "sku": { "type": "string" },
+        "barcode": { "type": "string" },
+        "qrCode": { "type": "string" },
+        "imageUrls": { "type": "array", "items": { "type": "string" } },
+        "availableColors": { "type": "array", "items": { "type": "string" } },
+        "availableSizes": { "type": "array", "items": { "type": "string" } },
+        "retailPrice": { "type": "number" },
+        "retailDiscountPrice": { "type": "number" },
+        "wholesalePrice": { "type": "number" },
+        "wholesaleMinQty": { "type": "integer" },
+        "unit": { "type": "string" },
+        "stockQuantity": { "type": "integer" },
+        "lowStockThreshold": { "type": "integer" },
+        "isFeatured": { "type": "boolean" },
+        "isOffer": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "companyId": { "type": "string" },
+        "brandShowcaseId": { "type": "string" },
+        "brandCategoryId": { "type": "string" },
+        "exclusiveToBrandShowcase": { "type": "boolean" },
+        "salesCount": { "type": "integer" },
+        "averageRating": { "type": "number" },
+        "reviewCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "name", "description", "categoryId", "sku", "imageUrls",
+        "retailPrice", "wholesalePrice", "wholesaleMinQty", "unit",
+        "stockQuantity", "lowStockThreshold", "isFeatured", "isOffer",
+        "isActive", "salesCount", "averageRating", "reviewCount",
+        "createdAt", "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "طلب شراء متكامل بلقطة الأسعار والعنوان وحالات التتبع التسع.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "accountTypeAtOrder": { "type": "string", "enum": ["retail", "wholesale"] },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "subtotal": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "deliveryZoneId": { "type": "string" },
+        "deliveryZoneName": { "type": "string" },
+        "deliveryFee": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["cod", "instapay", "vodafone_cash"] },
+        "paymentStatus": { "type": "string", "enum": ["pending_review", "verified", "rejected"] },
+        "transferReference": { "type": "string" },
+        "senderPhone": { "type": "string" },
+        "receiptImageUrl": { "type": "string" },
+        "orderStatus": {
+          "type": "string",
+          "enum": [
+            "new_order", "under_review", "confirmed", "preparing",
+            "ready_for_delivery", "out_for_delivery", "delivered",
+            "cancelled", "returned"
+          ]
+        },
+        "fulfillmentType": { "type": "string", "enum": ["delivery", "pickup"] },
+        "deliveryLabel": { "type": "string" },
+        "recipientName": { "type": "string" },
+        "phone": { "type": "string" },
+        "governorate": { "type": "string" },
+        "city": { "type": "string" },
+        "streetAddress": { "type": "string" },
+        "landmark": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "assignedDriverId": { "type": "string" },
+        "assignedDriverName": { "type": "string" },
+        "assignedDriverPhone": { "type": "string" },
+        "assignedAt": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" },
+        "statusNote": { "type": "string" },
+        "deliveryOtp": { "type": "string" },
+        "deliveryOtpVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "orderNumber", "customerName", "customerEmail",
+        "accountTypeAtOrder", "items", "subtotal", "discountAmount",
+        "deliveryFee", "totalAmount", "paymentMethod", "paymentStatus",
+        "orderStatus", "deliveryLabel", "recipientName", "phone",
+        "governorate", "city", "streetAddress", "createdAt", "updatedAt"
+      ]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "كوبون خصم للطلبات.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "discountType": { "type": "string", "enum": ["percent", "fixed"] },
+        "discountValue": { "type": "number" },
+        "minOrderAmount": { "type": "number" },
+        "maxDiscountAmount": { "type": "number" },
+        "usageLimit": { "type": "integer" },
+        "usedCount": { "type": "integer" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "discountType", "discountValue", "minOrderAmount", "usedCount", "isActive", "createdAt", "updatedAt"]
+    },
+    "DeliveryZone": {
+      "title": "DeliveryZone",
+      "description": "منطقة توصيل وتكلفتها ومدتها المتوقعة.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "governorate": { "type": "string" },
+        "fee": { "type": "number" },
+        "estimatedDuration": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "governorate", "fee", "estimatedDuration", "isActive", "createdAt", "updatedAt"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "إعدادات المتجر العامة ووسائل الدفع المعتمدة.",
+      "type": "object",
+      "properties": {
+        "vodafoneCashNumber": { "type": "string" },
+        "instaPayAddress": { "type": "string" },
+        "paymentInstructions": { "type": "string" },
+        "codEnabled": { "type": "boolean" },
+        "instaPayEnabled": { "type": "boolean" },
+        "vodafoneCashEnabled": { "type": "boolean" },
+        "storeName": { "type": "string" },
+        "tagline": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "supportPhone": { "type": "string" },
+        "whatsappNumber": { "type": "string" },
+        "storeAddress": { "type": "string" },
+        "announcementText": { "type": "string" },
+        "aboutStoreDescription": { "type": "string" },
+        "retailFacebookUrl": { "type": "string" },
+        "wholesaleFacebookUrl": { "type": "string" },
+        "socialPages": { "type": "array", "items": { "type": "object" } },
+        "retailPhones": { "type": "array", "items": { "type": "object" } },
+        "wholesalePhones": { "type": "array", "items": { "type": "object" } },
+        "showFeaturedSection": { "type": "boolean" },
+        "showDealsSection": { "type": "boolean" },
+        "showBestsellersSection": { "type": "boolean" },
+        "showRecommendedSection": { "type": "boolean" },
+        "showHeroSection": { "type": "boolean" },
+        "showColorVariants": { "type": "boolean" },
+        "showSizeVariants": { "type": "boolean" },
+        "heroBadgeText": { "type": "string" },
+        "heroTitleText": { "type": "string" },
+        "heroSubtitleText": { "type": "string" },
+        "heroCtaText": { "type": "string" },
+        "homeCategoryStyle": { "type": "string" },
+        "categoriesTabStyle": { "type": "string" },
+        "numeralFormat": { "type": "string", "enum": ["arabic", "english"] },
+        "freeShippingEnabled": { "type": "boolean" },
+        "freeShippingThreshold": { "type": "number" },
+        "deliveryOtpEnabled": { "type": "boolean" },
+        "privacyPolicyUrl": { "type": "string" },
+        "returnPolicyUrl": { "type": "string" },
+        "accountDeletionUrl": { "type": "string" },
+        "privacyPolicyText": { "type": "string" },
+        "returnPolicyText": { "type": "string" },
+        "termsOfServiceText": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["updatedAt"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "بنر إعلاني متحرك في الصفحة الرئيسية للمتجر.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["none", "category", "offers", "product"] },
+        "targetId": { "type": "string" },
+        "placement": { "type": "string" },
+        "bannerStyle": { "type": "string", "enum": ["normal", "slim"] },
+        "durationSeconds": { "type": "integer" },
+        "displayOrder": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "imageUrl", "targetType", "displayOrder", "isActive", "createdAt", "updatedAt"]
+    },
+    "ProductReview": {
+      "title": "ProductReview",
+      "description": "تقييم ومراجعة عميل على منتج مع إمكانية الإخفاء أو الحذف من الإدارة.",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "rating": { "type": "integer" },
+        "comment": { "type": "string" },
+        "isHidden": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "productName", "userId", "userName", "rating", "comment", "isHidden", "createdAt", "updatedAt"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "إشعار فوري داخل التطبيق للعميل حول حالة الطلب أو الدفع أو الجملة أو العروض.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["order_status", "payment_status", "wholesale_status", "offer_promo", "stock_alert", "general"] },
+        "referenceId": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "message", "type", "isRead", "createdAt"]
+    },
+    "FlashSale": {
+      "title": "FlashSale",
+      "description": "عرض فلاش سيل مجدول بأسعار معزولة عن أسعار الكتالوج العادية.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "badgeText": { "type": "string" },
+        "startsAt": { "type": "string", "format": "date-time" },
+        "endsAt": { "type": "string", "format": "date-time" },
+        "isActive": { "type": "boolean" },
+        "items": { "type": "array", "items": { "type": "object" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "badgeText", "startsAt", "endsAt", "isActive", "items", "createdAt", "updatedAt"]
+    },
+    "OrderNumberCounter": {
+      "title": "OrderNumberCounter",
+      "description": "عداد تسلسل أرقام الطلبات التلقائي بدءًا من ET-1000.",
+      "type": "object",
+      "properties": {
+        "nextNumber": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nextNumber", "updatedAt"]
+    },
+    "StoreCompany": {
+      "title": "StoreCompany",
+      "description": "الشركات والماركات المعرفة في إعدادات المتجر لربط المنتجات وإظهارها تلقائيًا",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "displayOrder": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "displayOrder", "isActive", "createdAt", "updatedAt"]
+    },
+    "BrandShowcase": {
+      "title": "BrandShowcase",
+      "description": "منتجات الشركات ببنر اختياري أو تصميم تلقائي وخصم اختياري وتنظيم في الرئيسية",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "companyId": { "type": "string" },
+        "companyImageUrl": { "type": "string" },
+        "bannerImageUrl": { "type": "string" },
+        "discountPercent": { "type": "number" },
+        "accentColorHex": { "type": "string" },
+        "placement": { "type": "string" },
+        "displayOrder": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "categories": { "type": "array", "items": { "type": "object" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "placement", "displayOrder", "isActive", "categories", "createdAt", "updatedAt"]
+    },
+    "StockAlert": {
+      "title": "StockAlert",
+      "description": "اشتراك عميل في تنبيه توفر منتج نافد من المخزون",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["productId", "productName", "userId", "createdAt"]
+    },
+    "SearchMiss": {
+      "title": "SearchMiss",
+      "description": "كلمة بحث أدخلها العملاء ولم تُرجع نتائج لمتابعتها في التقارير",
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "normalizedQuery": { "type": "string" },
+        "missCount": { "type": "integer" },
+        "lastSource": { "type": "string", "enum": ["android", "web"] },
+        "lastSearchedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["query", "normalizedQuery", "missCount", "lastSource", "lastSearchedAt", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "ملفات العملاء وحسابات الجملة والقطاعي"
+    },
+    "/users/{userId}/addresses/{addressId}": {
+      "schema": { "$ref": "#/entities/DeliveryAddress" },
+      "description": "عناوين التوصيل الخاصة بكل عميل"
+    },
+    "/users/{userId}/cart/{cartItemId}": {
+      "schema": { "$ref": "#/entities/CartItem" },
+      "description": "عربة التسوق المحفوظة لكل عميل مسجل"
+    },
+    "/users/{userId}/wishlist/{productId}": {
+      "schema": { "$ref": "#/entities/WishlistItem" },
+      "description": "المنتجات المفضلة لكل عميل مسجل"
+    },
+    "/users/{userId}/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/AppNotification" },
+      "description": "سجل الإشعارات الفورية الخاصة بكل عميل"
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "سجل مرجعي لصلاحيات الإدارة"
+    },
+    "/staff/{userId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "سجل الموظفين والصلاحيات"
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "الأقسام الرئيسية والفرعية للمتجر"
+    },
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "كتالوج المنتجات بأسعار القطاعي والجملة"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "الطلبات ولقطة الأسعار والتتبع"
+    },
+    "/coupons/{couponId}": {
+      "schema": { "$ref": "#/entities/Coupon" },
+      "description": "كوبونات الخصم"
+    },
+    "/deliveryZones/{zoneId}": {
+      "schema": { "$ref": "#/entities/DeliveryZone" },
+      "description": "مناطق وتكاليف التوصيل"
+    },
+    "/banners/{bannerId}": {
+      "schema": { "$ref": "#/entities/Banner" },
+      "description": "البنرات الإعلانية المتحركة في الصفحة الرئيسية"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/ProductReview" },
+      "description": "تقييمات ومراجعات العملاء للمنتجات"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "إعدادات المتجر والدفع"
+    },
+    "/flashSales/{flashSaleId}": {
+      "schema": { "$ref": "#/entities/FlashSale" },
+      "description": "عروض الفلاش سيل المجدولة"
+    },
+    "/counters/{counterId}": {
+      "schema": { "$ref": "#/entities/OrderNumberCounter" },
+      "description": "عدادات تسلسل أرقام الطلبات"
+    },
+    "/companies/{companyId}": {
+      "schema": { "$ref": "#/entities/StoreCompany" },
+      "description": "الشركات والماركات المعرفة في إعدادات المتجر"
+    },
+    "/brandShowcases/{showcaseId}": {
+      "schema": { "$ref": "#/entities/BrandShowcase" },
+      "description": "منتجات الشركات ببنرها الاختياري وفئاتها ومنتجاتها"
+    },
+    "/stockAlerts/{alertId}": {
+      "schema": { "$ref": "#/entities/StockAlert" },
+      "description": "تنبيهات توفر المنتجات للعملاء عند نفاذ المخزون"
+    },
+    "/searchMisses/{missId}": {
+      "schema": { "$ref": "#/entities/SearchMiss" },
+      "description": "تقرير الكلمات المبحوث عنها دون نتائج"
+    }
+  }
+}

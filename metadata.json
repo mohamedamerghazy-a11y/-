@@ -1,0 +1,6 @@
+{
+  "name": "الإيمان للتجارة",
+  "description": "منصة تجارة إلكترونية احترافية للبيع بالقطاعي والجملة باللغة العربية مع لوحة إدارة متكاملة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

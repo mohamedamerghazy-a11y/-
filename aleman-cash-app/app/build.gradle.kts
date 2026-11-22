@@ -2,6 +2,7 @@ plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.kotlin.serialization)
+  alias(libs.plugins.google.services)
 }
 
 android {
@@ -12,14 +13,32 @@ android {
     applicationId = "com.aistudio.aleman.cash.kmtvwx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1"
+  }
+
+  signingConfigs {
+    create("debugConfig") {
+      val sharedKeystore = file("${rootDir}/../debug.keystore")
+      val localKeystore = file("${rootDir}/debug.keystore")
+      storeFile = if (sharedKeystore.exists()) sharedKeystore else localKeystore
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
   }
 
   buildTypes {
     release {
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+    }
+    debug {
+      val sharedKeystore = file("${rootDir}/../debug.keystore")
+      val localKeystore = file("${rootDir}/debug.keystore")
+      if (sharedKeystore.exists() || localKeystore.exists()) {
+        signingConfig = signingConfigs.getByName("debugConfig")
+      }
     }
   }
 
@@ -54,6 +73,9 @@ dependencies {
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
   implementation(libs.androidx.datastore.preferences)
+  implementation(libs.androidx.credentials)
+  implementation(libs.androidx.credentials.play.services)
+  implementation(libs.googleid)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.serialization.json)

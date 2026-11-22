@@ -87,23 +87,30 @@ class AlemanCashViewModel(application: Application) : AndroidViewModel(applicati
   fun signInWithGoogle(activity: Activity) {
     viewModelScope.launch {
       _isBusy.value = true
-      val res = repository.signInWithGoogle(activity)
+      _statusBanner.value = null
+      val outcome = repository.signInWithGoogle(activity)
       _isBusy.value = false
-      res.onSuccess {
-        refreshAuthStatus()
-      }.onFailure { err ->
-        _statusBanner.value = err.message ?: "تعذر تسجيل الدخول بحساب جوجل"
+      when (outcome) {
+        is com.aleman.cash.data.CashSignInOutcome.Success -> {
+          refreshAuthStatus()
+        }
+        com.aleman.cash.data.CashSignInOutcome.Cancelled -> Unit
+        is com.aleman.cash.data.CashSignInOutcome.Error -> {
+          _statusBanner.value = outcome.message
+        }
       }
     }
   }
 
   fun signOut() {
     detachFirestoreListeners()
-    repository.signOut()
     _pendingOrders.value = emptyList()
     _cloudLogs.value = emptyList()
     _authState.value = StaffAuthState.SignedOut
     _staffLabel.value = ""
+    viewModelScope.launch {
+      repository.signOut()
+    }
   }
 
   fun scanRecentDeviceInbox(context: Context) {

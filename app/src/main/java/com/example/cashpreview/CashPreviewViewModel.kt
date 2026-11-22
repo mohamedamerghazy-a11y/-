@@ -242,12 +242,19 @@ class CashPreviewViewModel(application: Application) : AndroidViewModel(applicat
       ?.takeIf { it.isNotBlank() }
       ?: defaultOwnerEmail
 
-    if (email.isNotBlank() && email == configuredOwnerEmail) {
+    if (email.isNotBlank() && (email == defaultOwnerEmail || email == configuredOwnerEmail)) {
       return CashPreviewAuthState.Authorized to "مالك المتجر ($email)"
     }
 
+    val adminDoc = runCatching {
+      firestore.collection("admins").document(user.uid).get().await()
+    }.getOrNull()
+    if (adminDoc != null && adminDoc.exists()) {
+      return CashPreviewAuthState.Authorized to "مدير المتجر (${email.ifBlank { user.uid }})"
+    }
+
     val staffDoc = runCatching {
-      firestore.collection("staffUsers").document(user.uid).get().await()
+      firestore.collection("staff").document(user.uid).get().await()
     }.getOrNull()
 
     if (staffDoc != null && staffDoc.exists()) {
@@ -255,10 +262,10 @@ class CashPreviewViewModel(application: Application) : AndroidViewModel(applicat
       @Suppress("UNCHECKED_CAST")
       val permissions = (staffDoc.get("permissions") as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
       val role = staffDoc.getString("role").orEmpty()
-      val canVerify = role == "owner" ||
-        ("manage_payments" in permissions && "manage_orders" in permissions)
+      val canVerify = role in setOf("owner", "manager") ||
+        ("manage_payments" in permissions && ("manage_orders" in permissions || "manage_delivery" in permissions))
       if (isActive && canVerify) {
-        val display = staffDoc.getString("name")?.takeIf { it.isNotBlank() } ?: email.ifBlank { user.uid }
+        val display = staffDoc.getString("fullName")?.takeIf { it.isNotBlank() } ?: email.ifBlank { user.uid }
         return CashPreviewAuthState.Authorized to "موظف مخوّل ($display)"
       }
     }
@@ -498,7 +505,7 @@ class CashPreviewViewModel(application: Application) : AndroidViewModel(applicat
     val uid = auth.currentUser?.uid ?: error("يجب تسجيل الدخول بحساب الإدارة أولاً")
     val normalizedStage = if (targetStage == "confirmed") "confirmed" else "preparing"
     val targetLabel = if (normalizedStage == "confirmed") "تم التأكيد" else "جاري التجهيز"
-    val noteText = "تم تأكيد الدفع يدوياً من تطبيق الإيمان كاش (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})"
+    val noteText = "تم تأكيد الدفع يدوياً من تطبيق الإيمان كاش (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})".take(300)
 
     val orderRef = firestore.collection("orders").document(order.orderId)
     val logRef = firestore.collection("cashVerificationLogs").document()
@@ -520,32 +527,33 @@ class CashPreviewViewModel(application: Application) : AndroidViewModel(applicat
       batch.set(
         notifRef,
         mapOf(
-          "title" to "تم تأكيد الدفع لطلبك #${order.orderNumber}",
-          "body" to "تم تأكيد الدفع ونقل طلبك إلى مرحلة $targetLabel.",
+          "userId" to order.userId,
+          "title" to "تم تأكيد الدفع لطلبك #${order.orderNumber}".take(120),
+          "message" to "تم تأكيد الدفع ونقل طلبك إلى مرحلة $targetLabel.".take(500),
           "type" to "payment_status",
-          "orderId" to order.orderId,
+          "referenceId" to order.orderId.take(128),
           "isRead" to false,
           "createdAt" to FieldValue.serverTimestamp(),
         ),
       )
     }
-    batch.set(
-      logRef,
-      mapOf(
-        "transactionId" to "MANUAL-${order.orderNumber}-${System.currentTimeMillis()}",
-        "providerName" to "تأكيد يدوي",
-        "senderAddress" to "Manual",
-        "senderPhone" to CashPreviewSmsParser.normalizeEgyptianPhone(order.effectiveSenderPhone),
-        "amount" to order.totalAmount,
-        "matchedOrderId" to order.orderId,
-        "matchedOrderNumber" to order.orderNumber,
-        "status" to "matched",
-        "reason" to noteText,
-        "rawBodyPreview" to noteText,
-        "verifiedByUid" to uid,
-        "createdAt" to FieldValue.serverTimestamp(),
-      ),
+    val logMap = linkedMapOf<String, Any>(
+      "providerName" to "تأكيد يدوي",
+      "senderAddress" to "Manual",
+      "amount" to order.totalAmount.coerceAtLeast(0.0),
+      "transactionId" to "MANUAL-${order.orderNumber}-${System.currentTimeMillis()}".take(80),
+      "matchedOrderId" to order.orderId.take(80),
+      "matchedOrderNumber" to order.orderNumber.take(40),
+      "status" to "verified",
+      "reason" to noteText,
+      "rawBodyPreview" to noteText,
+      "createdAt" to FieldValue.serverTimestamp(),
     )
+    val normalizedSender = CashPreviewSmsParser.normalizeEgyptianPhone(order.effectiveSenderPhone)
+    if (normalizedSender.isNotBlank()) {
+      logMap["senderPhone"] = normalizedSender.take(40)
+    }
+    batch.set(logRef, logMap)
     batch.commit().await()
     "تم تأكيد الطلب #${order.orderNumber} ونقله إلى «$targetLabel»."
   }
@@ -643,7 +651,7 @@ class CashPreviewViewModel(application: Application) : AndroidViewModel(applicat
       orderNumber = orderNumber,
       userId = doc.getString("userId").orEmpty(),
       customerName = doc.getString("customerName").orEmpty(),
-      customerPhone = doc.getString("customerPhone").orEmpty(),
+      customerPhone = doc.getString("phone") ?: doc.getString("customerPhone").orEmpty(),
       paymentMethod = doc.getString("paymentMethod").orEmpty(),
       paymentStatus = doc.getString("paymentStatus").orEmpty(),
       orderStatus = doc.getString("orderStatus").orEmpty(),

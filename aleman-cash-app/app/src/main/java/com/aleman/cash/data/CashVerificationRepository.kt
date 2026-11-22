@@ -2,6 +2,13 @@ package com.aleman.cash.data
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.aleman.cash.R
 import com.aleman.cash.model.CashVerificationLogItem
 import com.aleman.cash.model.CashVerifierSettings
 import com.aleman.cash.model.LocalVerificationEvent
@@ -10,22 +17,29 @@ import com.aleman.cash.model.PendingTransferOrder
 import com.aleman.cash.model.StaffAuthState
 import com.aleman.cash.sms.SmsCashParser
 import com.aleman.cash.sms.SmsParseResult
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.OAuthProvider
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+private const val AUTH_TAG = "AlemanCashAuth"
 
 object LocalVerificationFeed {
   private val _events = MutableStateFlow<List<LocalVerificationEvent>>(emptyList())
@@ -36,32 +50,68 @@ object LocalVerificationFeed {
   }
 }
 
+sealed interface CashSignInOutcome {
+  data class Success(val user: FirebaseUser) : CashSignInOutcome
+  data object Cancelled : CashSignInOutcome
+  data class Error(val message: String) : CashSignInOutcome
+}
+
 class CashVerificationRepository(context: Context) {
 
   private val appContext = context.applicationContext
   private val auth = FirebaseInitializer.auth(appContext)
   private val firestore = FirebaseInitializer.firestore(appContext)
+  private val credentialManager = CredentialManager.create(appContext)
 
   private val defaultOwnerEmail = "mohamedamerghazy@gmail.com"
 
-  suspend fun signInWithGoogle(activity: Activity): Result<FirebaseUser> = runCatching {
-    val provider = OAuthProvider.newBuilder("google.com")
-      .addCustomParameter("prompt", "select_account")
+  suspend fun signInWithGoogle(activity: Activity): CashSignInOutcome {
+    val clientId = try {
+      appContext.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
+      Log.e(AUTH_TAG, "Missing default_web_client_id resource", e)
+      return CashSignInOutcome.Error("تعذر العثور على إعدادات تسجيل الدخول بحساب Google.")
+    }
+
+    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+    val request = GetCredentialRequest.Builder()
+      .addCredentialOption(signInOption)
       .build()
 
-    val pendingTask = auth.pendingAuthResult
-    val authResult = if (pendingTask != null) {
-      pendingTask.awaitResult()
-    } else {
-      auth.startActivityForSignInWithProvider(activity, provider).awaitResult()
+    return try {
+      val result = credentialManager.getCredential(activity, request)
+      val credential = result.credential
+      if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+        val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+        val firebaseCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+        val authResult = auth.signInWithCredential(firebaseCredential).awaitResult()
+        val user = authResult.user
+        if (user != null) {
+          CashSignInOutcome.Success(user)
+        } else {
+          CashSignInOutcome.Error("تعذر استكمال تسجيل الدخول بحساب Google.")
+        }
+      } else {
+        CashSignInOutcome.Error("نوع بيانات الاعتماد المستلم غير مدعوم.")
+      }
+    } catch (e: GetCredentialCancellationException) {
+      Log.w(AUTH_TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
+      CashSignInOutcome.Cancelled
+    } catch (e: Exception) {
+      Log.e(AUTH_TAG, "Google Sign-In failed", e)
+      CashSignInOutcome.Error(e.localizedMessage ?: "تعذر تسجيل الدخول بحساب Google، يرجى المحاولة مجدداً.")
     }
-    authResult.user ?: error("تعذر استكمال تسجيل الدخول بجوجل")
   }
 
   fun currentUser(): FirebaseUser? = auth.currentUser
 
-  fun signOut() {
-    auth.signOut()
+  suspend fun signOut() {
+    withContext(NonCancellable) {
+      runCatching {
+        credentialManager.clearCredentialState(ClearCredentialStateRequest())
+      }
+      auth.signOut()
+    }
   }
 
   suspend fun checkStaffAuthorization(): Pair<StaffAuthState, String> {
@@ -77,12 +127,19 @@ class CashVerificationRepository(context: Context) {
       ?.takeIf { it.isNotBlank() }
       ?: defaultOwnerEmail
 
-    if (email.isNotBlank() && email == configuredOwnerEmail) {
+    if (email.isNotBlank() && (email == defaultOwnerEmail || email == configuredOwnerEmail)) {
       return StaffAuthState.Authorized to "مالك المتجر ($email)"
     }
 
+    val adminDoc = runCatching {
+      firestore.collection("admins").document(user.uid).get().awaitResult()
+    }.getOrNull()
+    if (adminDoc != null && adminDoc.exists()) {
+      return StaffAuthState.Authorized to "مدير المتجر (${email.ifBlank { user.uid }})"
+    }
+
     val staffDoc = runCatching {
-      firestore.collection("staffUsers").document(user.uid).get().awaitResult()
+      firestore.collection("staff").document(user.uid).get().awaitResult()
     }.getOrNull()
 
     if (staffDoc != null && staffDoc.exists()) {
@@ -90,10 +147,10 @@ class CashVerificationRepository(context: Context) {
       @Suppress("UNCHECKED_CAST")
       val permissions = (staffDoc.get("permissions") as? List<*>)?.mapNotNull { it?.toString() }.orEmpty()
       val role = staffDoc.getString("role").orEmpty()
-      val canVerify = role == "owner" ||
-        ("manage_payments" in permissions && "manage_orders" in permissions)
+      val canVerify = role in setOf("owner", "manager") ||
+        ("manage_payments" in permissions && ("manage_orders" in permissions || "manage_delivery" in permissions))
       if (isActive && canVerify) {
-        val display = staffDoc.getString("name")?.takeIf { it.isNotBlank() } ?: email.ifBlank { user.uid }
+        val display = staffDoc.getString("fullName")?.takeIf { it.isNotBlank() } ?: email.ifBlank { user.uid }
         return StaffAuthState.Authorized to "موظف مخوّل ($display)"
       }
     }
@@ -240,21 +297,24 @@ class CashVerificationRepository(context: Context) {
     val existingDup = runCatching {
       firestore.collection("cashVerificationLogs")
         .whereEqualTo("transactionId", parsed.transactionId)
-        .whereEqualTo("status", "matched")
-        .limit(1)
+        .limit(5)
         .get()
         .awaitResult()
     }.getOrNull()
 
-    if (existingDup != null && !existingDup.isEmpty) {
+    val alreadyVerified = existingDup?.documents?.any {
+      val st = it.getString("status")
+      st == "verified" || st == "matched"
+    } == true
+
+    if (alreadyVerified) {
       val msg = "عملية مكررة (#${parsed.transactionId}): تم تأكيد هذه الحوالة مسبقاً."
       writeCloudLog(
         parsed = parsed,
         status = "duplicate",
         matchedOrderId = null,
         matchedOrderNumber = null,
-        reason = msg,
-        uid = uid
+        reason = msg
       )
       LocalVerificationFeed.push(
         LocalVerificationEvent(
@@ -310,8 +370,7 @@ class CashVerificationRepository(context: Context) {
         status = "unmatched",
         matchedOrderId = null,
         matchedOrderNumber = null,
-        reason = reason,
-        uid = uid
+        reason = reason
       )
       LocalVerificationFeed.push(
         LocalVerificationEvent(
@@ -336,10 +395,10 @@ class CashVerificationRepository(context: Context) {
       return reason
     }
 
-    // 3. Atomic WriteBatch to verify order, advance to preparing/confirmed, notify customer, and write audit log
+    // 3. Atomic WriteBatch strictly matching firestore.rules schemas
     val targetStage = if (settings.targetOrderStatusAfterPayment == "confirmed") "confirmed" else "preparing"
     val targetLabel = if (targetStage == "confirmed") "تم التأكيد" else "جاري التجهيز"
-    val noteText = "تم تأكيد الدفع آليًا عبر الإيمان كاش (${parsed.provider.displayName} • من ${parsed.senderPhone} • عملية #${parsed.transactionId} • مبلغ ${formatAmount(parsed.amount)} ج.م)"
+    val noteText = "تم تأكيد الدفع آلياً عبر الإيمان كاش (${parsed.provider.displayName} • من ${parsed.senderPhone} • عملية #${parsed.transactionId} • مبلغ ${formatAmount(parsed.amount)} ج.م)".take(300)
 
     val orderRef = firestore.collection("orders").document(matchedOrder.orderId)
     val logRef = firestore.collection("cashVerificationLogs").document()
@@ -351,7 +410,6 @@ class CashVerificationRepository(context: Context) {
         "paymentStatus" to "verified",
         "orderStatus" to targetStage,
         "statusNote" to noteText,
-        "senderPhone" to parsed.senderPhone,
         "updatedAt" to FieldValue.serverTimestamp()
       )
     )
@@ -364,10 +422,11 @@ class CashVerificationRepository(context: Context) {
       batch.set(
         notifRef,
         mapOf(
-          "title" to "تم تأكيد الدفع لطلبك #${matchedOrder.orderNumber}",
-          "body" to "تم التحقق من تحويل ${formatAmount(parsed.amount)} ج.م وتحويل الطلب تلقائياً إلى مرحلة $targetLabel.",
+          "userId" to matchedOrder.userId,
+          "title" to "تم تأكيد الدفع لطلبك #${matchedOrder.orderNumber}".take(120),
+          "message" to "تم التحقق من تحويل ${formatAmount(parsed.amount)} ج.م وتحويل الطلب تلقائياً إلى مرحلة $targetLabel.".take(500),
           "type" to "payment_status",
-          "orderId" to matchedOrder.orderId,
+          "referenceId" to matchedOrder.orderId.take(128),
           "isRead" to false,
           "createdAt" to FieldValue.serverTimestamp()
         )
@@ -376,19 +435,17 @@ class CashVerificationRepository(context: Context) {
 
     batch.set(
       logRef,
-      mapOf(
-        "transactionId" to parsed.transactionId,
-        "providerName" to parsed.provider.displayName,
-        "senderAddress" to parsed.rawSenderAddress,
-        "senderPhone" to parsed.senderPhone,
-        "amount" to parsed.amount,
-        "matchedOrderId" to matchedOrder.orderId,
-        "matchedOrderNumber" to matchedOrder.orderNumber,
-        "status" to "matched",
-        "reason" to noteText,
-        "rawBodyPreview" to parsed.rawBody.take(160),
-        "verifiedByUid" to uid,
-        "createdAt" to FieldValue.serverTimestamp()
+      buildCashLogPayload(
+        providerName = parsed.provider.displayName,
+        senderAddress = parsed.rawSenderAddress,
+        senderPhone = parsed.senderPhone,
+        amount = parsed.amount,
+        transactionId = parsed.transactionId,
+        matchedOrderId = matchedOrder.orderId,
+        matchedOrderNumber = matchedOrder.orderNumber,
+        status = "verified",
+        reason = noteText,
+        rawBodyPreview = parsed.rawBody
       )
     )
 
@@ -404,7 +461,7 @@ class CashVerificationRepository(context: Context) {
         amount = parsed.amount,
         senderPhone = parsed.senderPhone,
         transactionId = parsed.transactionId,
-        status = "matched",
+        status = "verified",
         message = successMsg
       )
     )
@@ -422,10 +479,10 @@ class CashVerificationRepository(context: Context) {
     order: PendingTransferOrder,
     targetStage: String
   ): Result<String> = runCatching {
-    val uid = auth.currentUser?.uid ?: error("يجب تسجيل الدخول أولاً")
+    if (auth.currentUser?.uid.isNullOrBlank()) error("يجب تسجيل الدخول أولاً")
     val normalizedStage = if (targetStage == "confirmed") "confirmed" else "preparing"
     val targetLabel = if (normalizedStage == "confirmed") "تم التأكيد" else "جاري التجهيز"
-    val noteText = "تم تأكيد الدفع يدوياً من تطبيق الإيمان كاش (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})"
+    val noteText = "تم تأكيد الدفع يدوياً من تطبيق الإيمان كاش (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})".take(300)
 
     val orderRef = firestore.collection("orders").document(order.orderId)
     val logRef = firestore.collection("cashVerificationLogs").document()
@@ -448,10 +505,11 @@ class CashVerificationRepository(context: Context) {
       batch.set(
         notifRef,
         mapOf(
-          "title" to "تم تأكيد الدفع لطلبك #${order.orderNumber}",
-          "body" to "تم تأكيد الدفع ونقل طلبك إلى مرحلة $targetLabel.",
+          "userId" to order.userId,
+          "title" to "تم تأكيد الدفع لطلبك #${order.orderNumber}".take(120),
+          "message" to "تم تأكيد الدفع ونقل طلبك إلى مرحلة $targetLabel.".take(500),
           "type" to "payment_status",
-          "orderId" to order.orderId,
+          "referenceId" to order.orderId.take(128),
           "isRead" to false,
           "createdAt" to FieldValue.serverTimestamp()
         )
@@ -459,19 +517,17 @@ class CashVerificationRepository(context: Context) {
     }
     batch.set(
       logRef,
-      mapOf(
-        "transactionId" to "MANUAL-${order.orderNumber}-${System.currentTimeMillis()}",
-        "providerName" to "تأكيد يدوي",
-        "senderAddress" to "Manual",
-        "senderPhone" to SmsCashParser.normalizeEgyptianPhone(order.effectiveSenderPhone),
-        "amount" to order.totalAmount,
-        "matchedOrderId" to order.orderId,
-        "matchedOrderNumber" to order.orderNumber,
-        "status" to "matched",
-        "reason" to noteText,
-        "rawBodyPreview" to noteText,
-        "verifiedByUid" to uid,
-        "createdAt" to FieldValue.serverTimestamp()
+      buildCashLogPayload(
+        providerName = "تأكيد يدوي",
+        senderAddress = "Manual",
+        senderPhone = SmsCashParser.normalizeEgyptianPhone(order.effectiveSenderPhone),
+        amount = order.totalAmount.coerceAtLeast(0.0),
+        transactionId = "MANUAL-${order.orderNumber}-${System.currentTimeMillis()}",
+        matchedOrderId = order.orderId,
+        matchedOrderNumber = order.orderNumber,
+        status = "verified",
+        reason = noteText,
+        rawBodyPreview = noteText
       )
     )
     batch.commit().awaitResult()
@@ -483,27 +539,66 @@ class CashVerificationRepository(context: Context) {
     status: String,
     matchedOrderId: String?,
     matchedOrderNumber: String?,
-    reason: String,
-    uid: String
+    reason: String
   ) {
     runCatching {
       firestore.collection("cashVerificationLogs").add(
-        mapOf(
-          "transactionId" to parsed.transactionId,
-          "providerName" to parsed.provider.displayName,
-          "senderAddress" to parsed.rawSenderAddress,
-          "senderPhone" to parsed.senderPhone,
-          "amount" to parsed.amount,
-          "matchedOrderId" to matchedOrderId,
-          "matchedOrderNumber" to matchedOrderNumber,
-          "status" to status,
-          "reason" to reason,
-          "rawBodyPreview" to parsed.rawBody.take(160),
-          "verifiedByUid" to uid,
-          "createdAt" to FieldValue.serverTimestamp()
+        buildCashLogPayload(
+          providerName = parsed.provider.displayName,
+          senderAddress = parsed.rawSenderAddress,
+          senderPhone = parsed.senderPhone,
+          amount = parsed.amount.coerceAtLeast(0.0),
+          transactionId = parsed.transactionId,
+          matchedOrderId = matchedOrderId,
+          matchedOrderNumber = matchedOrderNumber,
+          status = status,
+          reason = reason,
+          rawBodyPreview = parsed.rawBody
         )
       ).awaitResult()
     }
+  }
+
+  private fun buildCashLogPayload(
+    providerName: String,
+    senderAddress: String,
+    senderPhone: String,
+    amount: Double,
+    transactionId: String,
+    matchedOrderId: String?,
+    matchedOrderNumber: String?,
+    status: String,
+    reason: String,
+    rawBodyPreview: String
+  ): Map<String, Any> {
+    val map = linkedMapOf<String, Any>(
+      "providerName" to providerName.ifBlank { "محفظة" }.take(80),
+      "senderAddress" to senderAddress.ifBlank { "SMS" }.take(80),
+      "status" to status,
+      "createdAt" to FieldValue.serverTimestamp()
+    )
+    if (senderPhone.isNotBlank()) {
+      map["senderPhone"] = senderPhone.take(40)
+    }
+    if (amount >= 0.0) {
+      map["amount"] = amount
+    }
+    if (transactionId.isNotBlank()) {
+      map["transactionId"] = transactionId.take(80)
+    }
+    if (!matchedOrderId.isNullOrBlank()) {
+      map["matchedOrderId"] = matchedOrderId.take(80)
+    }
+    if (!matchedOrderNumber.isNullOrBlank()) {
+      map["matchedOrderNumber"] = matchedOrderNumber.take(40)
+    }
+    if (reason.isNotBlank()) {
+      map["reason"] = reason.take(300)
+    }
+    if (rawBodyPreview.isNotBlank()) {
+      map["rawBodyPreview"] = rawBodyPreview.take(300)
+    }
+    return map
   }
 
   private fun mapOrderDocument(doc: DocumentSnapshot): PendingTransferOrder? {
@@ -518,7 +613,7 @@ class CashVerificationRepository(context: Context) {
       orderNumber = orderNumber,
       userId = doc.getString("userId").orEmpty(),
       customerName = doc.getString("customerName").orEmpty(),
-      customerPhone = doc.getString("customerPhone").orEmpty(),
+      customerPhone = doc.getString("phone") ?: doc.getString("customerPhone").orEmpty(),
       paymentMethod = doc.getString("paymentMethod").orEmpty(),
       paymentStatus = doc.getString("paymentStatus").orEmpty(),
       orderStatus = doc.getString("orderStatus").orEmpty(),

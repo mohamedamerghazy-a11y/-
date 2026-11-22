@@ -168,7 +168,7 @@ private fun AlemanCashRoot(
         0 -> MonitorTab(
           settings = settings,
           pendingOrdersCount = pendingOrders.size,
-          matchedLogsCount = cloudLogs.count { it.status == "matched" },
+          matchedLogsCount = cloudLogs.count { it.status == "verified" || it.status == "matched" },
           localFeed = localFeed,
           hasSmsPermission = hasSmsPermission,
           hasNotificationPermission = hasNotifPermission,

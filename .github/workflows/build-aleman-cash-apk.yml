@@ -19,6 +19,11 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Decode Registered Debug Keystore
+        run: |
+          base64 -d debug.keystore.base64 > debug.keystore
+          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
+
       - name: Configure Android SDK and Licenses
         run: |
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
@@ -55,10 +60,14 @@ jobs:
         working-directory: aleman-cash-app
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Prepare APK for Download
+      - name: Verify APK Signing Fingerprint and Prepare Download
         run: |
           mkdir -p dist-apk
           cp aleman-cash-app/app/build/outputs/apk/debug/app-debug.apk dist-apk/aleman-cash.apk
+          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs dist-apk/aleman-cash.apk
+          fi
           ls -lh dist-apk/aleman-cash.apk
 
       - name: Upload Al-Eman Cash APK

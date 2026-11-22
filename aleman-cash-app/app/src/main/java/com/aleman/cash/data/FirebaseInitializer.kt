@@ -11,10 +11,9 @@ object FirebaseInitializer {
 
   const val FIRESTORE_DATABASE_ID = "ai-studio-android-08e4f24d-823a-4020-a9a2-1cd3da356058"
   private const val PROJECT_ID = "gen-lang-client-0678605325"
-  private const val APP_ID = "1:38745949638:android:d1f10e835fc5dd3c26dec7"
+  private const val APP_ID = "1:38745949638:android:75437e1ccc69302226dec7"
   private const val PROJECT_NUMBER = "38745949638"
   private const val STORAGE_BUCKET = "gen-lang-client-0678605325.firebasestorage.app"
-  // Encoded fragments from google-services.json project client configuration to avoid static raw secret flags
   private const val B64_K = "QUl6YVN5RDFSYkM2VE9jYnlJN0FxWUtqaS1EMTZHcjZEVllCdE0w"
 
   @Volatile
@@ -30,6 +29,11 @@ object FirebaseInitializer {
       if (existing != null) {
         cachedApp = existing
         return existing
+      }
+      val fromResources = FirebaseApp.initializeApp(appContext)
+      if (fromResources != null) {
+        cachedApp = fromResources
+        return fromResources
       }
       val key = String(Base64.decode(B64_K, Base64.DEFAULT), Charsets.UTF_8)
       val options = FirebaseOptions.Builder()

@@ -750,7 +750,7 @@ private fun StatMiniBox(
 
 @Composable
 private fun LocalEventCard(event: LocalVerificationEvent) {
-  val isMatched = event.status == "matched"
+  val isMatched = event.status == "verified" || event.status == "matched"
   val isIgnored = event.status.startsWith("ignored")
   val badgeColor = when {
     isMatched -> AlemanCashColors.Emerald
@@ -868,7 +868,7 @@ private fun PendingOrderCard(
 
 @Composable
 private fun CloudLogCard(log: CashVerificationLogItem) {
-  val isMatched = log.status == "matched"
+  val isMatched = log.status == "verified" || log.status == "matched"
   Card(
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     border = BorderStroke(1.dp, AlemanCashColors.BorderLight),
@@ -894,7 +894,7 @@ private fun CloudLogCard(log: CashVerificationLogItem) {
         ) {
           Text(
             text = when (log.status) {
-              "matched" -> "مؤكد لطلب #${log.matchedOrderNumber.orEmpty()}"
+              "verified", "matched" -> "مؤكد لطلب #${log.matchedOrderNumber.orEmpty()}"
               "duplicate" -> "مكرر"
               else -> "غير مطابق"
             },

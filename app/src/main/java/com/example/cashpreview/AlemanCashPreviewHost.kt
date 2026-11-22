@@ -370,7 +370,7 @@ fun AlemanCashPreviewHost(
             0 -> CashPreviewMonitorTab(
               settings = settings,
               pendingOrdersCount = pendingOrders.size,
-              matchedLogsCount = cloudLogs.count { it.status == "matched" },
+              matchedLogsCount = cloudLogs.count { it.status == "verified" || it.status == "matched" },
               localFeed = localFeed,
             )
 
@@ -1026,7 +1026,7 @@ private fun CashPendingOrderCard(
 
 @Composable
 private fun CashCloudLogCard(log: CashVerificationLogPreview) {
-  val isMatched = log.status == "matched"
+  val isMatched = log.status == "verified" || log.status == "matched"
   Card(
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     border = BorderStroke(1.dp, CashColors.BorderLight),
@@ -1048,7 +1048,7 @@ private fun CashCloudLogCard(log: CashVerificationLogPreview) {
         ) {
           Text(
             text = when (log.status) {
-              "matched" -> "مؤكد لطلب #${log.matchedOrderNumber.orEmpty()}"
+              "verified", "matched" -> "مؤكد لطلب #${log.matchedOrderNumber.orEmpty()}"
               "duplicate" -> "مكرر"
               else -> "غير مطابق"
             },

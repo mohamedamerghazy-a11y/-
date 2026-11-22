@@ -21,8 +21,15 @@ jobs:
 
       - name: Decode Registered Debug Keystore
         run: |
-          base64 -d debug.keystore.base64 > debug.keystore
-          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
+          if [ -f aleman-cash-app/signing/debug-keystore.b64 ]; then
+            base64 -d aleman-cash-app/signing/debug-keystore.b64 > aleman-cash-app/debug.keystore
+          elif [ -f debug.keystore.base64 ]; then
+            base64 -d debug.keystore.base64 > aleman-cash-app/debug.keystore
+          else
+            echo "ERROR: Registered debug keystore source not found."
+            exit 1
+          fi
+          keytool -list -v -keystore aleman-cash-app/debug.keystore -alias androiddebugkey -storepass android -keypass android | grep -E "SHA1:|SHA256:"
 
       - name: Configure Android SDK and Licenses
         run: |

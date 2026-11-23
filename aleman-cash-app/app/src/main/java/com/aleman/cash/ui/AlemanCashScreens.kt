@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PendingActions
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Sms
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -192,7 +193,7 @@ fun AuthGateScreen(
                   color = AlemanCashColors.Navy
                 )
                 Text(
-                  text = "الحساب الحالي: $staffLabel\nيلزم تسجيل الدخول بحساب المالك أو موظف لديه صلاحية إدارة المدفوعات والطلبات.",
+                  text = "الحساب الحالي: $staffLabel\nيلزم تسجيل الدخول بحساب المالك، أو موظف مخوّل، أو بريد مضاف في قائمة «متابعة تحويلات الكاش» بإعدادات المتجر.",
                   style = MaterialTheme.typography.bodyMedium,
                   color = AlemanCashColors.NavySoft
                 )
@@ -233,6 +234,7 @@ fun AuthGateScreen(
 @Composable
 fun MonitorTab(
   settings: CashVerifierSettings,
+  activeDeviceName: String = "",
   pendingOrdersCount: Int,
   matchedLogsCount: Int,
   localFeed: List<LocalVerificationEvent>,
@@ -262,7 +264,7 @@ fun MonitorTab(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
           ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
               Image(
                 painter = painterResource(id = R.drawable.aleman_cash_icon_img),
                 contentDescription = "أيقونة الإيمان كاش",
@@ -290,6 +292,32 @@ fun MonitorTab(
                 .clip(CircleShape)
                 .background(if (settings.autoVerifyEnabled && hasSmsPermission) AlemanCashColors.Emerald else AlemanCashColors.Gold)
             )
+          }
+
+          if (activeDeviceName.isNotBlank()) {
+            Surface(
+              color = AlemanCashColors.Emerald.copy(alpha = 0.2f),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.fillMaxWidth()
+            ) {
+              Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                Icon(
+                  imageVector = Icons.Default.PhoneAndroid,
+                  contentDescription = null,
+                  tint = AlemanCashColors.Emerald,
+                  modifier = Modifier.size(18.dp)
+                )
+                Text(
+                  text = "الهاتف المسجّل: $activeDeviceName",
+                  style = MaterialTheme.typography.labelLarge,
+                  color = Color.White
+                )
+              }
+            }
           }
 
           Row(
@@ -493,6 +521,7 @@ fun PendingOrdersAndLogsTab(
 fun SettingsTab(
   settings: CashVerifierSettings,
   staffLabel: String,
+  activeDeviceName: String = "",
   onToggleProvider: (String, Boolean) -> Unit,
   onSaveProvider: (name: String, aliases: String, isEnabled: Boolean, editingId: String?) -> Unit,
   onDeleteProvider: (String) -> Unit,
@@ -667,8 +696,15 @@ fun SettingsTab(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
           ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
               Text("الحساب المتصل بقاعدة البيانات", style = MaterialTheme.typography.labelLarge)
+              if (activeDeviceName.isNotBlank()) {
+                Text(
+                  text = "اسم الهاتف: $activeDeviceName",
+                  style = MaterialTheme.typography.labelMedium,
+                  color = AlemanCashColors.EmeraldDark
+                )
+              }
               Text(staffLabel, style = MaterialTheme.typography.bodyMedium, color = AlemanCashColors.TextMuted)
             }
             IconButton(
@@ -908,6 +944,24 @@ private fun CloudLogCard(log: CashVerificationLogItem) {
         text = "المبلغ: ${formatMoney(log.amount)} ج.م  |  من: ${log.senderPhone}",
         style = MaterialTheme.typography.bodyMedium
       )
+      if (log.verifiedByDeviceName.isNotBlank()) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.PhoneAndroid,
+            contentDescription = null,
+            tint = AlemanCashColors.EmeraldDark,
+            modifier = Modifier.size(15.dp)
+          )
+          Text(
+            text = "تم التأكيد على هاتف: ${log.verifiedByDeviceName}",
+            style = MaterialTheme.typography.labelMedium,
+            color = AlemanCashColors.EmeraldDark
+          )
+        }
+      }
       if (log.reason.isNotBlank()) {
         Text(
           text = log.reason,

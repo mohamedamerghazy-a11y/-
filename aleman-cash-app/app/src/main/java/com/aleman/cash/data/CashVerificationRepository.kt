@@ -46,6 +46,7 @@ object LocalVerificationFeed {
   val events: StateFlow<List<LocalVerificationEvent>> = _events.asStateFlow()
 
   fun push(event: LocalVerificationEvent) {
+    if (event.status.startsWith("ignored")) return
     _events.update { current -> (listOf(event) + current).take(60) }
   }
 }
@@ -64,6 +65,17 @@ class CashVerificationRepository(context: Context) {
   private val credentialManager = CredentialManager.create(appContext)
 
   private val defaultOwnerEmail = "mohamedamerghazy@gmail.com"
+
+  @Volatile
+  var activeDeviceName: String = ""
+    private set
+
+  @Volatile
+  var activeUserEmail: String = ""
+    private set
+
+  private fun buildCashAccountDocId(email: String): String =
+    email.trim().lowercase(Locale.ROOT).replace(Regex("[^a-z0-9_-]"), "_")
 
   suspend fun signInWithGoogle(activity: Activity): CashSignInOutcome {
     val clientId = try {
@@ -106,6 +118,8 @@ class CashVerificationRepository(context: Context) {
   fun currentUser(): FirebaseUser? = auth.currentUser
 
   suspend fun signOut() {
+    activeDeviceName = ""
+    activeUserEmail = ""
     withContext(NonCancellable) {
       runCatching {
         credentialManager.clearCredentialState(ClearCredentialStateRequest())
@@ -114,9 +128,45 @@ class CashVerificationRepository(context: Context) {
     }
   }
 
+  private suspend fun ensureResolvedDeviceIdentity(): Pair<String, String> {
+    if (activeDeviceName.isBlank()) {
+      runCatching { checkStaffAuthorization() }
+    }
+    val email = activeUserEmail.ifBlank {
+      auth.currentUser?.email?.trim()?.lowercase(Locale.ROOT).orEmpty()
+    }
+    val device = activeDeviceName.ifBlank {
+      email.ifBlank { "هاتف الإدارة" }
+    }
+    return device.take(80) to email.take(120)
+  }
+
   suspend fun checkStaffAuthorization(): Pair<StaffAuthState, String> {
-    val user = auth.currentUser ?: return StaffAuthState.SignedOut to ""
+    val user = auth.currentUser ?: run {
+      activeDeviceName = ""
+      activeUserEmail = ""
+      return StaffAuthState.SignedOut to ""
+    }
     val email = user.email?.trim()?.lowercase(Locale.ROOT).orEmpty()
+    activeUserEmail = email
+
+    // 1. Check dedicated Al-Eman Cash authorized emails first so custom device names always take precedence
+    if (email.isNotBlank()) {
+      val cashAccountDoc = runCatching {
+        firestore.collection("cashVerifierAccounts")
+          .document(buildCashAccountDocId(email))
+          .get()
+          .awaitResult()
+      }.getOrNull()
+      if (cashAccountDoc != null && cashAccountDoc.exists() && cashAccountDoc.getBoolean("isActive") == true) {
+        val customDeviceName = cashAccountDoc.getString("deviceName")
+          ?.trim()
+          ?.takeIf { it.isNotBlank() }
+          ?: email
+        activeDeviceName = customDeviceName
+        return StaffAuthState.Authorized to "$customDeviceName ($email)"
+      }
+    }
 
     val storeDoc = runCatching {
       firestore.collection("settings").document("store").get().awaitResult()
@@ -128,6 +178,7 @@ class CashVerificationRepository(context: Context) {
       ?: defaultOwnerEmail
 
     if (email.isNotBlank() && (email == defaultOwnerEmail || email == configuredOwnerEmail)) {
+      activeDeviceName = "هاتف المالك"
       return StaffAuthState.Authorized to "مالك المتجر ($email)"
     }
 
@@ -135,6 +186,7 @@ class CashVerificationRepository(context: Context) {
       firestore.collection("admins").document(user.uid).get().awaitResult()
     }.getOrNull()
     if (adminDoc != null && adminDoc.exists()) {
+      activeDeviceName = "هاتف الإدارة"
       return StaffAuthState.Authorized to "مدير المتجر (${email.ifBlank { user.uid }})"
     }
 
@@ -151,10 +203,12 @@ class CashVerificationRepository(context: Context) {
         ("manage_payments" in permissions && ("manage_orders" in permissions || "manage_delivery" in permissions))
       if (isActive && canVerify) {
         val display = staffDoc.getString("fullName")?.takeIf { it.isNotBlank() } ?: email.ifBlank { user.uid }
+        activeDeviceName = "هاتف $display"
         return StaffAuthState.Authorized to "موظف مخوّل ($display)"
       }
     }
 
+    activeDeviceName = ""
     return StaffAuthState.Unauthorized to (email.ifBlank { user.uid })
   }
 
@@ -194,6 +248,8 @@ class CashVerificationRepository(context: Context) {
           return@addSnapshotListener
         }
         val logs = snapshot?.documents.orEmpty().mapNotNull { doc ->
+          val status = doc.getString("status").orEmpty()
+          if (status.startsWith("ignored")) return@mapNotNull null
           CashVerificationLogItem(
             id = doc.id,
             transactionId = doc.getString("transactionId").orEmpty(),
@@ -203,68 +259,41 @@ class CashVerificationRepository(context: Context) {
             amount = (doc.get("amount") as? Number)?.toDouble() ?: 0.0,
             matchedOrderId = doc.getString("matchedOrderId"),
             matchedOrderNumber = doc.getString("matchedOrderNumber"),
-            status = doc.getString("status").orEmpty(),
+            status = status,
             reason = doc.getString("reason").orEmpty(),
             rawBodyPreview = doc.getString("rawBodyPreview").orEmpty(),
             createdAtMillis = (doc.getTimestamp("createdAt")?.toDate()?.time)
-              ?: (doc.getLong("createdAtMillis") ?: System.currentTimeMillis())
+              ?: (doc.getLong("createdAtMillis") ?: System.currentTimeMillis()),
+            verifiedByDeviceName = doc.getString("verifiedByDeviceName").orEmpty(),
+            verifiedByEmail = doc.getString("verifiedByEmail").orEmpty(),
+            isSettled = doc.getBoolean("isSettled") == true
           )
         }
         onUpdate(logs)
       }
   }
 
+  /**
+   * يعالج رسائل الدفع الواردة من المحافظ المفعّلة فقط.
+   * يعيد null بصمت لأي رسالة متخطاة أو غير تابعة للمحافظ المطلوبة دون إظهارها في السجل أو الإشعارات.
+   */
   suspend fun processIncomingSms(
     senderAddress: String,
     rawBody: String,
     settings: CashVerifierSettings,
     notifyUser: Boolean = true
-  ): String {
+  ): String? {
     val result = SmsCashParser.parseIncomingPaymentSms(
       senderAddress = senderAddress,
       rawBody = rawBody,
       providers = settings.providers
     )
 
-    when (result) {
-      is SmsParseResult.IgnoredUnknownOrDisabledSender -> {
-        val msg = "تم تجاهل الرسالة لأن المرسل «$senderAddress» غير مسجل أو غير مفعّل في الإعدادات."
-        LocalVerificationFeed.push(
-          LocalVerificationEvent(
-            id = UUID.randomUUID().toString(),
-            timestampMillis = System.currentTimeMillis(),
-            senderAddress = senderAddress,
-            providerName = "غير مفعّل",
-            amount = null,
-            senderPhone = null,
-            transactionId = null,
-            status = "ignored_sender",
-            message = msg
-          )
-        )
-        return msg
-      }
-
-      is SmsParseResult.IgnoredNotIncomingPayment -> {
-        val msg = "رسالة من ${result.provider.displayName} تم تخطيها: ${result.reason}"
-        LocalVerificationFeed.push(
-          LocalVerificationEvent(
-            id = UUID.randomUUID().toString(),
-            timestampMillis = System.currentTimeMillis(),
-            senderAddress = senderAddress,
-            providerName = result.provider.displayName,
-            amount = null,
-            senderPhone = null,
-            transactionId = null,
-            status = "ignored_content",
-            message = msg
-          )
-        )
-        return msg
-      }
-
+    return when (result) {
+      is SmsParseResult.IgnoredUnknownOrDisabledSender -> null
+      is SmsParseResult.IgnoredNotIncomingPayment -> null
       is SmsParseResult.Matched -> {
-        return verifyParsedPayment(result.parsed, settings, notifyUser)
+        verifyParsedPayment(result.parsed, settings, notifyUser)
       }
     }
   }
@@ -396,23 +425,28 @@ class CashVerificationRepository(context: Context) {
     }
 
     // 3. Atomic WriteBatch strictly matching firestore.rules schemas
+    val (deviceName, verifierEmail) = ensureResolvedDeviceIdentity()
     val targetStage = if (settings.targetOrderStatusAfterPayment == "confirmed") "confirmed" else "preparing"
     val targetLabel = if (targetStage == "confirmed") "تم التأكيد" else "جاري التجهيز"
-    val noteText = "تم تأكيد الدفع آلياً عبر الإيمان كاش (${parsed.provider.displayName} • من ${parsed.senderPhone} • عملية #${parsed.transactionId} • مبلغ ${formatAmount(parsed.amount)} ج.م)".take(300)
+    val noteText = "تم التأكيد على هاتف: $deviceName • ${parsed.provider.displayName} • عملية #${parsed.transactionId} • مبلغ ${formatAmount(parsed.amount)} ج.م".take(300)
 
     val orderRef = firestore.collection("orders").document(matchedOrder.orderId)
     val logRef = firestore.collection("cashVerificationLogs").document()
 
-    val batch = firestore.batch()
-    batch.update(
-      orderRef,
-      mapOf(
-        "paymentStatus" to "verified",
-        "orderStatus" to targetStage,
-        "statusNote" to noteText,
-        "updatedAt" to FieldValue.serverTimestamp()
-      )
+    val orderUpdate = linkedMapOf<String, Any>(
+      "paymentStatus" to "verified",
+      "orderStatus" to targetStage,
+      "statusNote" to noteText,
+      "verifiedByDeviceName" to deviceName,
+      "verifiedAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp()
     )
+    if (verifierEmail.isNotBlank()) {
+      orderUpdate["verifiedByEmail"] = verifierEmail
+    }
+
+    val batch = firestore.batch()
+    batch.update(orderRef, orderUpdate)
 
     if (matchedOrder.userId.isNotBlank()) {
       val notifRef = firestore.collection("users")
@@ -445,13 +479,22 @@ class CashVerificationRepository(context: Context) {
         matchedOrderNumber = matchedOrder.orderNumber,
         status = "verified",
         reason = noteText,
-        rawBodyPreview = parsed.rawBody
+        rawBodyPreview = parsed.rawBody,
+        verifiedByDeviceName = deviceName,
+        verifiedByEmail = verifierEmail
       )
     )
 
     batch.commit().awaitResult()
+    notifyOrderPreparationStaff(
+      orderId = matchedOrder.orderId,
+      orderNumber = matchedOrder.orderNumber,
+      customerName = matchedOrder.customerName,
+      totalAmount = matchedOrder.totalAmount,
+      confirmationSummary = "تأكيد آلي عبر هاتف «$deviceName»"
+    )
 
-    val successMsg = "تم تأكيد دفع الطلب #${matchedOrder.orderNumber} (${formatAmount(matchedOrder.totalAmount)} ج.م) بمبلغ ${formatAmount(parsed.amount)} ج.م ونقله إلى «$targetLabel»."
+    val successMsg = "تم تأكيد دفع الطلب #${matchedOrder.orderNumber} على هاتف «$deviceName» بمبلغ ${formatAmount(parsed.amount)} ج.م ونقله إلى «$targetLabel» وإشعار مسؤولي التجهيز."
     LocalVerificationFeed.push(
       LocalVerificationEvent(
         id = UUID.randomUUID().toString(),
@@ -480,23 +523,28 @@ class CashVerificationRepository(context: Context) {
     targetStage: String
   ): Result<String> = runCatching {
     if (auth.currentUser?.uid.isNullOrBlank()) error("يجب تسجيل الدخول أولاً")
+    val (deviceName, verifierEmail) = ensureResolvedDeviceIdentity()
     val normalizedStage = if (targetStage == "confirmed") "confirmed" else "preparing"
     val targetLabel = if (normalizedStage == "confirmed") "تم التأكيد" else "جاري التجهيز"
-    val noteText = "تم تأكيد الدفع يدوياً من تطبيق الإيمان كاش (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})".take(300)
+    val noteText = "تم التأكيد يدوياً على هاتف: $deviceName (${order.effectiveSenderPhone.ifBlank { "تحويل إلكتروني" }})".take(300)
 
     val orderRef = firestore.collection("orders").document(order.orderId)
     val logRef = firestore.collection("cashVerificationLogs").document()
 
-    val batch = firestore.batch()
-    batch.update(
-      orderRef,
-      mapOf(
-        "paymentStatus" to "verified",
-        "orderStatus" to normalizedStage,
-        "statusNote" to noteText,
-        "updatedAt" to FieldValue.serverTimestamp()
-      )
+    val orderUpdate = linkedMapOf<String, Any>(
+      "paymentStatus" to "verified",
+      "orderStatus" to normalizedStage,
+      "statusNote" to noteText,
+      "verifiedByDeviceName" to deviceName,
+      "verifiedAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to FieldValue.serverTimestamp()
     )
+    if (verifierEmail.isNotBlank()) {
+      orderUpdate["verifiedByEmail"] = verifierEmail
+    }
+
+    val batch = firestore.batch()
+    batch.update(orderRef, orderUpdate)
     if (order.userId.isNotBlank()) {
       val notifRef = firestore.collection("users")
         .document(order.userId)
@@ -527,11 +575,91 @@ class CashVerificationRepository(context: Context) {
         matchedOrderNumber = order.orderNumber,
         status = "verified",
         reason = noteText,
-        rawBodyPreview = noteText
+        rawBodyPreview = noteText,
+        verifiedByDeviceName = deviceName,
+        verifiedByEmail = verifierEmail
       )
     )
     batch.commit().awaitResult()
-    "تم تأكيد الطلب #${order.orderNumber} ونقله إلى «$targetLabel»."
+    notifyOrderPreparationStaff(
+      orderId = order.orderId,
+      orderNumber = order.orderNumber,
+      customerName = order.customerName,
+      totalAmount = order.totalAmount,
+      confirmationSummary = "تأكيد يدوي عبر هاتف «$deviceName»"
+    )
+    "تم تأكيد الطلب #${order.orderNumber} على هاتف «$deviceName» ونقله إلى «$targetLabel» وإشعار مسؤولي التجهيز."
+  }
+
+  private suspend fun notifyOrderPreparationStaff(
+    orderId: String,
+    orderNumber: String,
+    customerName: String,
+    totalAmount: Double,
+    confirmationSummary: String
+  ) {
+    if (orderId.isBlank()) return
+    val targetUids = LinkedHashSet<String>()
+    val prepRoles = setOf("owner", "manager", "order_manager", "customer_service")
+
+    runCatching {
+      val staffSnap = firestore.collection("staff").get().awaitResult()
+      staffSnap.documents.forEach { doc ->
+        if (doc.getBoolean("isActive") != true) return@forEach
+        val role = doc.getString("role")?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        val permissions = (doc.get("permissions") as? List<*>)
+          ?.mapNotNull { it as? String }
+          ?.toSet()
+          .orEmpty()
+        if (role in prepRoles || "manage_orders" in permissions) {
+          val uid = doc.getString("uid")?.trim().takeUnless { it.isNullOrBlank() } ?: doc.id
+          if (uid.isNotBlank()) targetUids.add(uid)
+        }
+      }
+    }
+
+    runCatching {
+      val ownersSnap = firestore.collection("users")
+        .whereEqualTo("role", "owner")
+        .get()
+        .awaitResult()
+      ownersSnap.documents.forEach { doc ->
+        val uid = doc.getString("uid")?.trim().takeUnless { it.isNullOrBlank() } ?: doc.id
+        if (uid.isNotBlank()) targetUids.add(uid)
+      }
+    }
+
+    if (targetUids.isEmpty()) return
+
+    val cleanCustomer = customerName.trim().ifEmpty { "عميل المتجر" }
+    val title = "طلب جديد جاهز للتجهيز #$orderNumber".take(120)
+    val message = "تم تأكيد الدفع ($confirmationSummary) • العميل: $cleanCustomer • الإجمالي: ${formatAmount(totalAmount)} ج.م — يرجى البدء في التجهيز.".take(500)
+    val cleanRef = orderId.take(128)
+
+    runCatching {
+      targetUids.toList().chunked(400).forEach { chunk ->
+        val notifBatch = firestore.batch()
+        chunk.forEach { uid ->
+          val docRef = firestore.collection("users")
+            .document(uid)
+            .collection("notifications")
+            .document()
+          notifBatch.set(
+            docRef,
+            mapOf(
+              "userId" to uid,
+              "title" to title,
+              "message" to message,
+              "type" to "order_status",
+              "referenceId" to cleanRef,
+              "isRead" to false,
+              "createdAt" to FieldValue.serverTimestamp()
+            )
+          )
+        }
+        notifBatch.commit().awaitResult()
+      }
+    }
   }
 
   private suspend fun writeCloudLog(
@@ -541,6 +669,7 @@ class CashVerificationRepository(context: Context) {
     matchedOrderNumber: String?,
     reason: String
   ) {
+    val (deviceName, verifierEmail) = ensureResolvedDeviceIdentity()
     runCatching {
       firestore.collection("cashVerificationLogs").add(
         buildCashLogPayload(
@@ -553,7 +682,9 @@ class CashVerificationRepository(context: Context) {
           matchedOrderNumber = matchedOrderNumber,
           status = status,
           reason = reason,
-          rawBodyPreview = parsed.rawBody
+          rawBodyPreview = parsed.rawBody,
+          verifiedByDeviceName = deviceName,
+          verifiedByEmail = verifierEmail
         )
       ).awaitResult()
     }
@@ -569,12 +700,15 @@ class CashVerificationRepository(context: Context) {
     matchedOrderNumber: String?,
     status: String,
     reason: String,
-    rawBodyPreview: String
+    rawBodyPreview: String,
+    verifiedByDeviceName: String = "",
+    verifiedByEmail: String = ""
   ): Map<String, Any> {
     val map = linkedMapOf<String, Any>(
       "providerName" to providerName.ifBlank { "محفظة" }.take(80),
       "senderAddress" to senderAddress.ifBlank { "SMS" }.take(80),
       "status" to status,
+      "isSettled" to false,
       "createdAt" to FieldValue.serverTimestamp()
     )
     if (senderPhone.isNotBlank()) {
@@ -597,6 +731,12 @@ class CashVerificationRepository(context: Context) {
     }
     if (rawBodyPreview.isNotBlank()) {
       map["rawBodyPreview"] = rawBodyPreview.take(300)
+    }
+    if (verifiedByDeviceName.isNotBlank()) {
+      map["verifiedByDeviceName"] = verifiedByDeviceName.take(80)
+    }
+    if (verifiedByEmail.isNotBlank()) {
+      map["verifiedByEmail"] = verifiedByEmail.take(120)
     }
     return map
   }

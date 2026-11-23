@@ -76,6 +76,49 @@ class NotificationRepository(
     }
   }
 
+  /**
+   * ينشئ إشعاراً بمعرّف ثابت (Idempotent) لحساب المستخدم الحالي فقط إذا لم يكن موجوداً من قبل،
+   * لمنع تكرار إشعارات الطلبات المنتظرة للتأكيد عند إعادة فتح التطبيق.
+   */
+  suspend fun ensureDeterministicNotification(
+    targetUid: String,
+    notifId: String,
+    title: String,
+    message: String,
+    type: NotificationType,
+    referenceId: String? = null,
+  ): Result<Boolean> {
+    val cleanUid = targetUid.trim()
+    val cleanId = notifId.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_").take(120)
+    if (auth.currentUser == null || cleanUid.isBlank() || cleanId.isBlank()) {
+      return Result.success(false)
+    }
+    val docRef = db.collection("users").document(cleanUid).collection("notifications").document(cleanId)
+    return try {
+      val existing = docRef.get().await()
+      if (existing.exists()) {
+        return Result.success(false)
+      }
+      val cleanRef = referenceId?.trim()?.takeIf { it.isNotEmpty() }?.take(128)
+      val payload = buildMap<String, Any> {
+        put("userId", cleanUid)
+        put("title", title.trim().ifEmpty { "إشعار من المتجر" }.take(120))
+        put("message", message.trim().ifEmpty { "لديك تحديث جديد." }.take(500))
+        put("type", type.code)
+        if (cleanRef != null) put("referenceId", cleanRef)
+        put("isRead", false)
+        put("createdAt", FieldValue.serverTimestamp())
+      }
+      docRef.set(payload).await()
+      Result.success(true)
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.CREATE, docRef.path)
+      Result.failure(e)
+    }
+  }
+
   suspend fun broadcastNotificationToUsers(
     targetUids: List<String>,
     title: String,
@@ -167,5 +210,141 @@ class NotificationRepository(
       handleFirestoreError(e, OperationType.DELETE, docRef.path)
       Result.failure(e)
     }
+  }
+
+  /**
+   * يرسل إشعاراً فورياً لكل موظف نشط مسؤول عن تجهيز الطلبات (مالك المتجر، المدير، مسؤول الطلبات،
+   * خدمة العملاء، وأي موظف لديه صلاحية إدارة الطلبات) فور تأكيد الدفع آلياً أو يدوياً.
+   */
+  suspend fun notifyOrderPreparationStaff(
+    orderId: String,
+    orderNumber: String,
+    customerName: String,
+    totalAmount: Double,
+    confirmationSummary: String,
+  ): Result<Int> {
+    if (auth.currentUser == null || orderId.isBlank()) {
+      return Result.success(0)
+    }
+    val targetUids = LinkedHashSet<String>()
+
+    try {
+      val staffSnap = db.collection("staff").get().await()
+      staffSnap.documents.forEach { doc ->
+        val isActive = doc.getBoolean("isActive") == true
+        if (!isActive) return@forEach
+        val role = doc.getString("role")?.trim()?.lowercase().orEmpty()
+        val permissions = (doc.get("permissions") as? List<*>)
+          ?.mapNotNull { it as? String }
+          ?.toSet()
+          .orEmpty()
+        val canPrepare = role in ORDER_PREP_ROLES || "manage_orders" in permissions
+        if (canPrepare) {
+          val uid = doc.getString("uid")?.trim().takeUnless { it.isNullOrBlank() } ?: doc.id
+          if (uid.isNotBlank()) targetUids.add(uid)
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.LIST, "staff")
+    }
+
+    try {
+      val ownersSnap = db.collection("users")
+        .whereEqualTo("role", "owner")
+        .get()
+        .await()
+      ownersSnap.documents.forEach { doc ->
+        val uid = doc.getString("uid")?.trim().takeUnless { it.isNullOrBlank() } ?: doc.id
+        if (uid.isNotBlank()) targetUids.add(uid)
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.LIST, "users?role=owner")
+    }
+
+    if (targetUids.isEmpty()) return Result.success(0)
+
+    val formattedAmount = formatNotificationAmount(totalAmount)
+    val cleanCustomer = customerName.trim().ifEmpty { "عميل المتجر" }
+    val cleanSummary = confirmationSummary.trim().ifEmpty { "تأكيد الدفع" }
+    val title = "طلب جديد جاهز للتجهيز #$orderNumber"
+    val message = "تم تأكيد الدفع ($cleanSummary) • العميل: $cleanCustomer • الإجمالي: $formattedAmount ج.م — يرجى البدء في التجهيز."
+
+    return broadcastNotificationToUsers(
+      targetUids = targetUids.toList(),
+      title = title,
+      message = message,
+      type = NotificationType.ORDER_STATUS,
+      referenceId = orderId,
+    )
+  }
+
+  /**
+   * يرسل إشعاراً لموظفي التوصيل النشطين عند تحويل حالة طلب التوصيل إلى «جاهز للتوصيل».
+   */
+  suspend fun notifyDeliveryDriversOrderReady(
+    orderId: String,
+    orderNumber: String,
+    recipientName: String,
+    totalAmount: Double,
+    locationText: String,
+  ): Result<Int> {
+    if (auth.currentUser == null || orderId.isBlank()) {
+      return Result.success(0)
+    }
+    val driverUids = LinkedHashSet<String>()
+
+    try {
+      val staffSnap = db.collection("staff").get().await()
+      staffSnap.documents.forEach { doc ->
+        val isActive = doc.getBoolean("isActive") == true
+        if (!isActive) return@forEach
+        val role = doc.getString("role")?.trim()?.lowercase().orEmpty()
+        val permissions = (doc.get("permissions") as? List<*>)
+          ?.mapNotNull { it as? String }
+          ?.toSet()
+          .orEmpty()
+        val isDriver = role == "delivery_driver" || ("deliver_orders" in permissions && role != "owner")
+        if (isDriver) {
+          val uid = doc.getString("uid")?.trim().takeUnless { it.isNullOrBlank() } ?: doc.id
+          if (uid.isNotBlank()) driverUids.add(uid)
+        }
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      handleFirestoreError(e, OperationType.LIST, "staff")
+    }
+
+    if (driverUids.isEmpty()) return Result.success(0)
+
+    val formattedAmount = formatNotificationAmount(totalAmount)
+    val cleanRecipient = recipientName.trim().ifEmpty { "العميل" }
+    val cleanLocation = locationText.trim().ifEmpty { "يرجى مراجعة العنوان داخل الطلب" }
+    val title = "طلب جاهز للتوصيل #$orderNumber"
+    val message = "تم تجهيز الطلب للعميل: $cleanRecipient • الإجمالي: $formattedAmount ج.م • العنوان: $cleanLocation"
+
+    return broadcastNotificationToUsers(
+      targetUids = driverUids.toList(),
+      title = title,
+      message = message,
+      type = NotificationType.ORDER_STATUS,
+      referenceId = orderId,
+    )
+  }
+
+  private fun formatNotificationAmount(amount: Double): String {
+    return if (amount % 1.0 == 0.0) {
+      amount.toLong().toString()
+    } else {
+      String.format(java.util.Locale.US, "%.2f", amount)
+    }
+  }
+
+  companion object {
+    private val ORDER_PREP_ROLES = setOf("owner", "manager", "order_manager", "customer_service")
   }
 }

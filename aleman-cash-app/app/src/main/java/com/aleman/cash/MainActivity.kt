@@ -81,6 +81,7 @@ private fun AlemanCashRoot(
   val context = LocalContext.current
   val authState by vm.authState.collectAsStateWithLifecycle()
   val staffLabel by vm.staffLabel.collectAsStateWithLifecycle()
+  val activeDeviceName by vm.activeDeviceName.collectAsStateWithLifecycle()
   val settings by vm.settings.collectAsStateWithLifecycle()
   val pendingOrders by vm.pendingOrders.collectAsStateWithLifecycle()
   val cloudLogs by vm.cloudLogs.collectAsStateWithLifecycle()
@@ -167,6 +168,7 @@ private fun AlemanCashRoot(
       when (selectedTab) {
         0 -> MonitorTab(
           settings = settings,
+          activeDeviceName = activeDeviceName,
           pendingOrdersCount = pendingOrders.size,
           matchedLogsCount = cloudLogs.count { it.status == "verified" || it.status == "matched" },
           localFeed = localFeed,
@@ -197,6 +199,7 @@ private fun AlemanCashRoot(
         else -> SettingsTab(
           settings = settings,
           staffLabel = staffLabel,
+          activeDeviceName = activeDeviceName,
           onToggleProvider = { id, enabled -> vm.toggleProvider(id, enabled) },
           onSaveProvider = { name, aliases, enabled, editId ->
             vm.saveProvider(name, aliases, enabled, editId)

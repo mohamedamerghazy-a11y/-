@@ -76,6 +76,39 @@ service cloud.firestore {
       return hasAnyStaffPermission([permission]);
     }
 
+    function hasVerifiedEmail() {
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        ('email_verified' in request.auth.token) &&
+        request.auth.token.email_verified == true &&
+        request.auth.token.email is string &&
+        request.auth.token.email.size() >= 3;
+    }
+
+    function cashAccountKey() {
+      return request.auth.token.email.lower().replace('[^a-z0-9_-]', '_');
+    }
+
+    function isAuthorizedCashVerifier() {
+      let key = cashAccountKey();
+      let path = /databases/$(database)/documents/cashVerifierAccounts/$(key);
+      return hasVerifiedEmail() &&
+        exists(path) &&
+        get(path).data.isActive == true &&
+        get(path).data.email.lower() == request.auth.token.email.lower();
+    }
+
+    function canSettleCashDevice() {
+      let staffDoc = /databases/$(database)/documents/staff/$(request.auth.uid);
+      return isBootstrappedOwner() ||
+        (
+          isSignedIn() &&
+          exists(staffDoc) &&
+          get(staffDoc).data.isActive == true &&
+          get(staffDoc).data.role in ['owner', 'accountant']
+        );
+    }
+
     function isAtomicCheckoutOrderValid(orderId) {
       let orderAfter = getAfter(/databases/$(database)/documents/orders/$(orderId)).data;
       return isValidId(orderId) &&
@@ -310,6 +343,9 @@ service cloud.firestore {
         (!('statusNote' in data) || (data.statusNote is string && data.statusNote.size() <= 500)) &&
         (!('deliveryOtp' in data) || (data.deliveryOtp is string && data.deliveryOtp.size() == 4 && data.deliveryOtp.matches('^[0-9]{4}$'))) &&
         (!('deliveryOtpVerified' in data) || data.deliveryOtpVerified is bool) &&
+        (!('verifiedByDeviceName' in data) || (data.verifiedByDeviceName is string && data.verifiedByDeviceName.size() <= 100)) &&
+        (!('verifiedByEmail' in data) || (data.verifiedByEmail is string && data.verifiedByEmail.size() <= 160)) &&
+        (!('verifiedAt' in data) || (data.verifiedAt is timestamp && data.verifiedAt <= request.time)) &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -436,6 +472,31 @@ service cloud.firestore {
         data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
+    function isValidCashVerifierAccount(data, accountId) {
+      return data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+        accountId == data.email.lower().replace('[^a-z0-9_-]', '_') &&
+        data.deviceName is string && data.deviceName.size() >= 2 && data.deviceName.size() <= 80 &&
+        (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 30)) &&
+        data.isActive is bool &&
+        (!('lastResetAt' in data) || (data.lastResetAt is timestamp && data.lastResetAt <= request.time)) &&
+        (!('lastResetByName' in data) || (data.lastResetByName is string && data.lastResetByName.size() <= 120)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCashWithdrawal(data) {
+      return data.deviceKey is string && data.deviceKey.size() >= 1 && data.deviceKey.size() <= 160 &&
+        data.deviceName is string && data.deviceName.size() >= 1 && data.deviceName.size() <= 100 &&
+        (!('deviceEmail' in data) || (data.deviceEmail is string && data.deviceEmail.size() <= 160)) &&
+        data.withdrawnAmount is number && data.withdrawnAmount > 0 &&
+        data.operationsCount is int && data.operationsCount >= 1 &&
+        data.withdrawnByUid == request.auth.uid &&
+        data.withdrawnByName is string && data.withdrawnByName.size() >= 1 && data.withdrawnByName.size() <= 120 &&
+        (!('withdrawnByEmail' in data) || (data.withdrawnByEmail is string && data.withdrawnByEmail.size() <= 160)) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 300)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     // --- Collection Rules ---
 
     // 1. User Profiles
@@ -444,7 +505,11 @@ service cloud.firestore {
         request.auth.uid == userId ||
         hasAnyStaffPermission(['manage_customers', 'approve_wholesale', 'manage_staff'])
       );
-      allow list: if hasAnyStaffPermission(['manage_customers', 'approve_wholesale', 'manage_staff']);
+      allow list: if hasAnyStaffPermission(['manage_customers', 'approve_wholesale', 'manage_staff']) ||
+        (
+          (isAuthorizedCashVerifier() || hasAnyStaffPermission(['manage_orders', 'manage_payments', 'manage_delivery'])) &&
+          existing().role == 'owner'
+        );
 
       allow create: if isSignedIn() &&
         isValidId(userId) &&
@@ -604,6 +669,7 @@ service cloud.firestore {
           isValidNotification(incoming(), userId) &&
           (
             request.auth.uid == userId ||
+            (isAuthorizedCashVerifier() && incoming().type in ['payment_status', 'order_status']) ||
             hasAnyStaffPermission([
               'manage_orders', 'manage_payments', 'manage_delivery',
               'deliver_orders', 'approve_wholesale', 'manage_customers',
@@ -635,9 +701,11 @@ service cloud.firestore {
     match /staff/{userId} {
       allow get: if isSignedIn() && isValidId(userId) && (
         request.auth.uid == userId ||
-        hasStaffPermission('manage_staff')
+        isAuthorizedCashVerifier() ||
+        hasAnyStaffPermission(['manage_staff', 'manage_orders', 'manage_payments', 'manage_delivery'])
       );
-      allow list: if hasStaffPermission('manage_staff');
+      allow list: if isAuthorizedCashVerifier() ||
+        hasAnyStaffPermission(['manage_staff', 'manage_orders', 'manage_payments', 'manage_delivery']);
 
       allow create: if hasStaffPermission('manage_staff') &&
         isValidId(userId) &&
@@ -761,11 +829,13 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow get: if isSignedIn() && isValidId(orderId) && (
         existing().userId == request.auth.uid ||
+        isAuthorizedCashVerifier() ||
         (hasStaffPermission('deliver_orders') && ('assignedDriverId' in existing()) && existing().assignedDriverId == request.auth.uid) ||
         hasAnyStaffPermission(['manage_orders', 'manage_payments', 'manage_delivery', 'view_reports'])
       );
       allow list: if isSignedIn() && (
         existing().userId == request.auth.uid ||
+        isAuthorizedCashVerifier() ||
         (hasStaffPermission('deliver_orders') && ('assignedDriverId' in existing()) && existing().assignedDriverId == request.auth.uid) ||
         hasAnyStaffPermission(['manage_orders', 'manage_payments', 'manage_delivery', 'view_reports'])
       );
@@ -804,75 +874,94 @@ service cloud.firestore {
         (!('deliveryOtpVerified' in incoming()) || incoming().deliveryOtpVerified == false) &&
         isValidOrder(incoming());
 
-      allow update: if isSignedIn() &&
+      allow update: if isValidOrderUpdate(orderId);
+
+      allow delete: if isBootstrappedOwner() && isValidId(orderId);
+    }
+
+    function isValidOrderUpdate(orderId) {
+      let next = request.resource.data;
+      let prev = resource.data;
+      let changed = next.diff(prev).affectedKeys();
+      let baseValid = isSignedIn() &&
         isValidId(orderId) &&
-        incoming().userId == existing().userId &&
-        incoming().orderNumber == existing().orderNumber &&
-        incoming().accountTypeAtOrder == existing().accountTypeAtOrder &&
-        incoming().items == existing().items &&
-        incoming().subtotal == existing().subtotal &&
-        incoming().discountAmount == existing().discountAmount &&
-        incoming().deliveryFee == existing().deliveryFee &&
-        incoming().totalAmount == existing().totalAmount &&
-        incoming().createdAt == existing().createdAt &&
-        (!('deliveryOtp' in incoming()) || (('deliveryOtp' in existing()) && incoming().deliveryOtp == existing().deliveryOtp)) &&
-        (!('deliveryOtp' in existing()) || (('deliveryOtp' in incoming()) && incoming().deliveryOtp == existing().deliveryOtp)) &&
-        incoming().orderStatus in [
+        next.userId == prev.userId &&
+        next.orderNumber == prev.orderNumber &&
+        next.accountTypeAtOrder == prev.accountTypeAtOrder &&
+        next.items == prev.items &&
+        next.subtotal == prev.subtotal &&
+        next.discountAmount == prev.discountAmount &&
+        next.deliveryFee == prev.deliveryFee &&
+        next.totalAmount == prev.totalAmount &&
+        next.createdAt == prev.createdAt &&
+        (!('deliveryOtp' in next) || (('deliveryOtp' in prev) && next.deliveryOtp == prev.deliveryOtp)) &&
+        (!('deliveryOtp' in prev) || (('deliveryOtp' in next) && next.deliveryOtp == prev.deliveryOtp)) &&
+        next.orderStatus in [
           'new_order', 'under_review', 'confirmed', 'preparing',
           'ready_for_delivery', 'out_for_delivery', 'delivered',
           'cancelled', 'returned'
         ] &&
-        incoming().paymentStatus in ['pending_review', 'verified', 'rejected'] &&
-        (!('statusNote' in incoming()) || (incoming().statusNote is string && incoming().statusNote.size() <= 500)) &&
-        (!('receiptImageUrl' in incoming()) || (incoming().receiptImageUrl is string && incoming().receiptImageUrl.size() <= 500)) &&
-        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
-        (
-          (
-            existing().userId == request.auth.uid &&
-            existing().orderStatus in ['new_order', 'under_review'] &&
-            incoming().orderStatus == 'cancelled' &&
-            incoming().paymentStatus == existing().paymentStatus &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'statusNote', 'updatedAt'])
-          ) ||
-          (
-            incoming().paymentStatus == existing().paymentStatus &&
-            (!('assignedDriverId' in incoming()) || isValidId(incoming().assignedDriverId)) &&
-            (!('assignedDriverName' in incoming()) || (incoming().assignedDriverName is string && incoming().assignedDriverName.size() <= 100)) &&
-            (!('assignedDriverPhone' in incoming()) || (incoming().assignedDriverPhone is string && incoming().assignedDriverPhone.size() <= 30)) &&
-            (!('assignedAt' in incoming()) || (incoming().assignedAt is timestamp && incoming().assignedAt <= request.time)) &&
-            (!('deliveryOtpVerified' in incoming()) || incoming().deliveryOtpVerified is bool) &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'orderStatus', 'assignedDriverId', 'assignedDriverName',
-              'assignedDriverPhone', 'assignedAt', 'statusNote', 'deliveryOtpVerified', 'updatedAt'
-            ]) &&
-            hasAnyStaffPermission(['manage_orders', 'manage_delivery'])
-          ) ||
-          (
-            ('assignedDriverId' in existing()) &&
-            existing().assignedDriverId == request.auth.uid &&
-            incoming().orderStatus in ['out_for_delivery', 'delivered', 'returned'] &&
-            incoming().paymentStatus == existing().paymentStatus &&
-            (!('deliveryOtpVerified' in incoming()) || incoming().deliveryOtpVerified is bool) &&
-            (!('deliveryOtp' in existing()) || incoming().orderStatus != 'delivered' || incoming().deliveryOtpVerified == true) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['orderStatus', 'statusNote', 'deliveryOtpVerified', 'updatedAt']) &&
-            hasStaffPermission('deliver_orders')
-          ) ||
-          (
-            incoming().orderStatus == existing().orderStatus &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'receiptImageUrl', 'statusNote', 'updatedAt']) &&
-            (!('receiptImageUrl' in incoming()) || ('receiptImageUrl' in existing() && incoming().receiptImageUrl == existing().receiptImageUrl)) &&
-            hasStaffPermission('manage_payments')
-          ) ||
-          (
-            incoming().paymentStatus == 'verified' &&
-            incoming().orderStatus in ['confirmed', 'preparing'] &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'orderStatus', 'statusNote', 'updatedAt']) &&
-            hasStaffPermission('manage_payments') &&
-            hasAnyStaffPermission(['manage_orders', 'manage_delivery'])
-          )
-        );
+        next.paymentStatus in ['pending_review', 'verified', 'rejected'] &&
+        (!('statusNote' in next) || (next.statusNote is string && next.statusNote.size() <= 500)) &&
+        (!('receiptImageUrl' in next) || (next.receiptImageUrl is string && next.receiptImageUrl.size() <= 500)) &&
+        (!('verifiedByDeviceName' in next) || (next.verifiedByDeviceName is string && next.verifiedByDeviceName.size() <= 100)) &&
+        (!('verifiedByEmail' in next) || (next.verifiedByEmail is string && next.verifiedByEmail.size() <= 160)) &&
+        (!('verifiedAt' in next) || (next.verifiedAt is timestamp && next.verifiedAt <= request.time)) &&
+        next.updatedAt is timestamp && next.updatedAt <= request.time;
 
-      allow delete: if isBootstrappedOwner() && isValidId(orderId);
+      return baseValid && (
+        (
+          prev.userId == request.auth.uid &&
+          prev.orderStatus in ['new_order', 'under_review'] &&
+          next.orderStatus == 'cancelled' &&
+          next.paymentStatus == prev.paymentStatus &&
+          changed.hasOnly(['orderStatus', 'statusNote', 'updatedAt'])
+        ) ||
+        (
+          next.paymentStatus == prev.paymentStatus &&
+          (!('assignedDriverId' in next) || isValidId(next.assignedDriverId)) &&
+          (!('assignedDriverName' in next) || (next.assignedDriverName is string && next.assignedDriverName.size() <= 100)) &&
+          (!('assignedDriverPhone' in next) || (next.assignedDriverPhone is string && next.assignedDriverPhone.size() <= 30)) &&
+          (!('assignedAt' in next) || (next.assignedAt is timestamp && next.assignedAt <= request.time)) &&
+          (!('deliveryOtpVerified' in next) || next.deliveryOtpVerified is bool) &&
+          changed.hasOnly([
+            'orderStatus', 'assignedDriverId', 'assignedDriverName',
+            'assignedDriverPhone', 'assignedAt', 'statusNote', 'deliveryOtpVerified', 'updatedAt'
+          ]) &&
+          hasAnyStaffPermission(['manage_orders', 'manage_delivery'])
+        ) ||
+        (
+          ('assignedDriverId' in prev) &&
+          prev.assignedDriverId == request.auth.uid &&
+          next.orderStatus in ['out_for_delivery', 'delivered', 'returned'] &&
+          next.paymentStatus == prev.paymentStatus &&
+          (!('deliveryOtpVerified' in next) || next.deliveryOtpVerified is bool) &&
+          (!('deliveryOtp' in prev) || next.orderStatus != 'delivered' || next.deliveryOtpVerified == true) &&
+          changed.hasOnly(['orderStatus', 'statusNote', 'deliveryOtpVerified', 'updatedAt']) &&
+          hasStaffPermission('deliver_orders')
+        ) ||
+        (
+          next.orderStatus == prev.orderStatus &&
+          changed.hasOnly([
+            'paymentStatus', 'receiptImageUrl', 'statusNote',
+            'verifiedByDeviceName', 'verifiedByEmail', 'verifiedAt', 'updatedAt'
+          ]) &&
+          (!('receiptImageUrl' in next) || ('receiptImageUrl' in prev && next.receiptImageUrl == prev.receiptImageUrl)) &&
+          hasStaffPermission('manage_payments')
+        ) ||
+        (
+          next.paymentStatus == 'verified' &&
+          next.orderStatus in ['confirmed', 'preparing'] &&
+          changed.hasOnly([
+            'paymentStatus', 'orderStatus', 'statusNote',
+            'verifiedByDeviceName', 'verifiedByEmail', 'verifiedAt', 'updatedAt'
+          ]) &&
+          (
+            isAuthorizedCashVerifier() ||
+            hasStaffPermission('manage_payments')
+          )
+        )
+      );
     }
 
     // 9. Coupons
@@ -944,6 +1033,9 @@ service cloud.firestore {
         (!('introVideoDurationSeconds' in incoming()) || (incoming().introVideoDurationSeconds is int && incoming().introVideoDurationSeconds >= 0 && incoming().introVideoDurationSeconds <= 120)) &&
         (!('introVideoTitle' in incoming()) || (incoming().introVideoTitle is string && incoming().introVideoTitle.size() <= 100)) &&
         (!('introVideoMuted' in incoming()) || incoming().introVideoMuted is bool) &&
+        (!('introReelTargetType' in incoming()) || incoming().introReelTargetType in ['promo_only', 'category', 'product', 'company']) &&
+        (!('introReelTargetId' in incoming()) || (incoming().introReelTargetId is string && incoming().introReelTargetId.size() <= 120)) &&
+        (!('introReelTargetLabel' in incoming()) || (incoming().introReelTargetLabel is string && incoming().introReelTargetLabel.size() <= 120)) &&
         (!('tickerEnabled' in incoming()) || incoming().tickerEnabled is bool) &&
         (!('tickerText' in incoming()) || (incoming().tickerText is string && incoming().tickerText.size() <= 1000)) &&
         (!('tickerPlacement' in incoming()) || incoming().tickerPlacement in [
@@ -1115,13 +1207,17 @@ service cloud.firestore {
 
     // 16. Automated SMS Cash Verification Audit Logs ("الإيمان كاش")
     match /cashVerificationLogs/{logId} {
-      allow get, list: if hasStaffPermission('manage_payments');
-      allow create: if hasStaffPermission('manage_payments') &&
+      allow get, list: if hasAnyStaffPermission(['manage_payments', 'manage_store_settings', 'view_reports']) ||
+        canSettleCashDevice() ||
+        isAuthorizedCashVerifier();
+
+      allow create: if (hasStaffPermission('manage_payments') || isAuthorizedCashVerifier()) &&
         isValidId(logId) &&
         incoming().keys().hasAll(['providerName', 'senderAddress', 'status', 'createdAt']) &&
         incoming().keys().hasOnly([
           'providerName', 'senderAddress', 'senderPhone', 'amount',
           'transactionId', 'matchedOrderId', 'matchedOrderNumber',
+          'verifiedByDeviceName', 'verifiedByEmail', 'isSettled',
           'status', 'reason', 'rawBodyPreview', 'createdAt'
         ]) &&
         incoming().providerName is string && incoming().providerName.size() <= 80 &&
@@ -1131,11 +1227,22 @@ service cloud.firestore {
         (!('transactionId' in incoming()) || (incoming().transactionId is string && incoming().transactionId.size() <= 80)) &&
         (!('matchedOrderId' in incoming()) || (incoming().matchedOrderId is string && incoming().matchedOrderId.size() <= 80)) &&
         (!('matchedOrderNumber' in incoming()) || (incoming().matchedOrderNumber is string && incoming().matchedOrderNumber.size() <= 40)) &&
+        (!('verifiedByDeviceName' in incoming()) || (incoming().verifiedByDeviceName is string && incoming().verifiedByDeviceName.size() <= 100)) &&
+        (!('verifiedByEmail' in incoming()) || (incoming().verifiedByEmail is string && incoming().verifiedByEmail.size() <= 160)) &&
+        (!('isSettled' in incoming()) || incoming().isSettled == false) &&
         (!('reason' in incoming()) || (incoming().reason is string && incoming().reason.size() <= 300)) &&
         (!('rawBodyPreview' in incoming()) || (incoming().rawBodyPreview is string && incoming().rawBodyPreview.size() <= 300)) &&
         incoming().status in ['verified', 'ignored_sender', 'ignored_type', 'unmatched', 'duplicate', 'error'] &&
         incoming().createdAt is timestamp &&
         incoming().createdAt <= request.time;
+
+      allow update: if canSettleCashDevice() &&
+        isValidId(logId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['isSettled', 'withdrawalId', 'settledAt']) &&
+        incoming().isSettled == true &&
+        incoming().withdrawalId is string && incoming().withdrawalId.size() >= 1 && incoming().withdrawalId.size() <= 128 &&
+        incoming().settledAt is timestamp && incoming().settledAt <= request.time;
+
       allow delete: if isBootstrappedOwner() && isValidId(logId);
     }
 
@@ -1260,6 +1367,68 @@ service cloud.firestore {
 
       allow delete: if hasAnyStaffPermission(['manage_store_settings', 'manage_products', 'manage_banners']) &&
         isValidId(companyId);
+    }
+
+    // 21. Authorized Additional Al-Eman Cash Verifier Accounts (Emails & Phone Names)
+    match /cashVerifierAccounts/{accountId} {
+      allow get: if isValidId(accountId) && (
+        (hasVerifiedEmail() && accountId == cashAccountKey()) ||
+        hasAnyStaffPermission(['manage_payments', 'manage_store_settings', 'view_reports']) ||
+        canSettleCashDevice()
+      );
+      allow list: if hasAnyStaffPermission(['manage_payments', 'manage_store_settings', 'view_reports']) ||
+        canSettleCashDevice();
+
+      allow create: if hasAnyStaffPermission(['manage_payments', 'manage_store_settings']) &&
+        isValidId(accountId) &&
+        incoming().keys().hasAll(['email', 'deviceName', 'isActive', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly([
+          'email', 'deviceName', 'phoneNumber', 'isActive',
+          'lastResetAt', 'lastResetByName', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidCashVerifierAccount(incoming(), accountId);
+
+      allow update: if isValidId(accountId) &&
+        isValidCashVerifierAccount(incoming(), accountId) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().email == existing().email &&
+        (
+          (
+            hasAnyStaffPermission(['manage_payments', 'manage_store_settings']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'deviceName', 'phoneNumber', 'isActive', 'updatedAt'
+            ])
+          ) ||
+          (
+            canSettleCashDevice() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'lastResetAt', 'lastResetByName', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if hasAnyStaffPermission(['manage_payments', 'manage_store_settings']) &&
+        isValidId(accountId);
+    }
+
+    // 22. Cash Device Settlement / Withdrawal Records ("تم السحب" — Owner or Accountant ONLY)
+    match /cashWithdrawals/{withdrawalId} {
+      allow get, list: if hasAnyStaffPermission(['manage_payments', 'manage_store_settings', 'view_reports']) ||
+        canSettleCashDevice();
+
+      allow create: if canSettleCashDevice() &&
+        isValidId(withdrawalId) &&
+        incoming().keys().hasAll([
+          'deviceKey', 'deviceName', 'withdrawnAmount', 'operationsCount',
+          'withdrawnByUid', 'withdrawnByName', 'createdAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'deviceKey', 'deviceName', 'deviceEmail', 'withdrawnAmount', 'operationsCount',
+          'withdrawnByUid', 'withdrawnByName', 'withdrawnByEmail', 'note', 'createdAt'
+        ]) &&
+        isValidCashWithdrawal(incoming());
+
+      allow delete: if isBootstrappedOwner() && isValidId(withdrawalId);
     }
   }
 }

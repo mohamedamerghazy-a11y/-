@@ -462,6 +462,40 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["query", "normalizedQuery", "missCount", "lastSource", "lastSearchedAt", "createdAt"]
+    },
+    "CashVerifierAccount": {
+      "title": "CashVerifierAccount",
+      "description": "حسابات الإيميل الإضافية المصرح لها بتسجيل الدخول في تطبيق الإيمان كاش مع اسم الهاتف المرتبط بكل إيميل",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "lastResetAt": { "type": "string", "format": "date-time" },
+        "lastResetByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "deviceName", "isActive", "createdAt", "updatedAt"]
+    },
+    "CashWithdrawalRecord": {
+      "title": "CashWithdrawalRecord",
+      "description": "سجل عمليات السحب وتصفير حساب هاتف كاش محدد بواسطة المالك أو المحاسب",
+      "type": "object",
+      "properties": {
+        "deviceKey": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "deviceEmail": { "type": "string" },
+        "withdrawnAmount": { "type": "number" },
+        "operationsCount": { "type": "integer" },
+        "withdrawnByUid": { "type": "string" },
+        "withdrawnByName": { "type": "string" },
+        "withdrawnByEmail": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["deviceKey", "deviceName", "withdrawnAmount", "operationsCount", "withdrawnByUid", "withdrawnByName", "createdAt"]
     }
   },
   "firestore": {
@@ -548,6 +582,14 @@
     "/searchMisses/{missId}": {
       "schema": { "$ref": "#/entities/SearchMiss" },
       "description": "تقرير الكلمات المبحوث عنها دون نتائج"
+    },
+    "/cashVerifierAccounts/{accountId}": {
+      "schema": { "$ref": "#/entities/CashVerifierAccount" },
+      "description": "الإيميلات الإضافية المصرح لها في تطبيق الإيمان كاش وأسماء الهواتف"
+    },
+    "/cashWithdrawals/{withdrawalId}": {
+      "schema": { "$ref": "#/entities/CashWithdrawalRecord" },
+      "description": "سجل عمليات سحب وتصفير حسابات هواتف الكاش"
     }
   }
 }

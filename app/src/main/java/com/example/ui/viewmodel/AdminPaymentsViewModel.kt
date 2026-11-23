@@ -145,34 +145,59 @@ class AdminPaymentsViewModel(
 
   fun updatePaymentStatus(orderId: String, newStatus: String, currentOrderStatus: OrderStatus, note: String?) {
     val targetOrder = _uiState.value.orders.firstOrNull { it.id == orderId }
+    val wasAlreadyVerified = targetOrder?.paymentStatus == "verified"
+    val effectiveOrderStatus = if (
+      newStatus == "verified" &&
+      currentOrderStatus in setOf(OrderStatus.NEW_ORDER, OrderStatus.UNDER_REVIEW, OrderStatus.CONFIRMED)
+    ) {
+      OrderStatus.PREPARING
+    } else {
+      currentOrderStatus
+    }
     viewModelScope.launch {
       _uiState.update { it.copy(isSubmitting = true, errorMessage = null, feedbackMessage = null) }
       val result = orderRepository.updateOrderStatus(
         orderId = orderId,
-        newStatus = currentOrderStatus,
+        newStatus = effectiveOrderStatus,
         statusNote = note,
         paymentStatus = newStatus,
       )
+      var notifiedStaffCount = 0
       if (result.isSuccess && targetOrder != null && notificationRepository != null && (newStatus == "verified" || newStatus == "rejected")) {
-        val title = if (newStatus == "verified") {
-          "تم تأكيد دفعة الطلب #${targetOrder.orderNumber}"
-        } else {
-          "تحديث حول دفع الطلب #${targetOrder.orderNumber}"
+        val shouldNotifyVerified = newStatus == "verified" && !wasAlreadyVerified
+        val shouldNotifyRejected = newStatus == "rejected"
+        if (shouldNotifyVerified || shouldNotifyRejected) {
+          val title = if (newStatus == "verified") {
+            "تم تأكيد دفعة الطلب #${targetOrder.orderNumber}"
+          } else {
+            "تحديث حول دفع الطلب #${targetOrder.orderNumber}"
+          }
+          val msg = if (newStatus == "verified") {
+            "تم التحقق من تحويلك المالي واعتماد الدفعة بنجاح، وجارٍ تجهيز طلبك الآن."
+          } else {
+            val reason = note?.trim()?.takeIf { it.isNotEmpty() } ?: "يرجى مراجعة بيانات التحويل أو التواصل مع الدعم."
+            "تعذر اعتماد إيصال التحويل المالي: $reason"
+          }
+          runCatching {
+            notificationRepository.sendNotificationToUser(
+              targetUid = targetOrder.userId,
+              title = title,
+              message = msg,
+              type = NotificationType.PAYMENT_STATUS,
+              referenceId = orderId,
+            )
+          }
         }
-        val msg = if (newStatus == "verified") {
-          "تم التحقق من تحويلك المالي واعتماد الدفعة بنجاح."
-        } else {
-          val reason = note?.trim()?.takeIf { it.isNotEmpty() } ?: "يرجى مراجعة بيانات التحويل أو التواصل مع الدعم."
-          "تعذر اعتماد إيصال التحويل المالي: $reason"
-        }
-        runCatching {
-          notificationRepository.sendNotificationToUser(
-            targetUid = targetOrder.userId,
-            title = title,
-            message = msg,
-            type = NotificationType.PAYMENT_STATUS,
-            referenceId = orderId,
-          )
+        if (shouldNotifyVerified) {
+          notifiedStaffCount = runCatching {
+            notificationRepository.notifyOrderPreparationStaff(
+              orderId = orderId,
+              orderNumber = targetOrder.orderNumber,
+              customerName = targetOrder.customerName.ifBlank { targetOrder.recipientName },
+              totalAmount = targetOrder.totalAmount,
+              confirmationSummary = "تأكيد يدوي من إدارة المدفوعات",
+            ).getOrDefault(0)
+          }.getOrDefault(0)
         }
       }
       _uiState.update { state ->
@@ -183,9 +208,14 @@ class AdminPaymentsViewModel(
               "rejected" -> "تم رفض الدفع"
               else -> "قيد المراجعة"
             }
+            val staffSuffix = if (newStatus == "verified" && notifiedStaffCount > 0) {
+              " وتم إرسال إشعار لمسؤولي تجهيز الطلبات."
+            } else {
+              "."
+            }
             state.copy(
               isSubmitting = false,
-              feedbackMessage = "تم تحديث حالة الدفع إلى ($statusLabel).",
+              feedbackMessage = "تم تحديث حالة الدفع إلى ($statusLabel)$staffSuffix",
             )
           },
           onFailure = { err ->

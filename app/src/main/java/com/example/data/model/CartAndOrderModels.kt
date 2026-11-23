@@ -233,6 +233,9 @@ data class Order(
   val assignedAt: Timestamp? = null,
   val notes: String? = null,
   val statusNote: String? = null,
+  val verifiedByDeviceName: String? = null,
+  val verifiedByEmail: String? = null,
+  val verifiedAt: Timestamp? = null,
   @ServerTimestamp val createdAt: Timestamp? = null,
   @ServerTimestamp val updatedAt: Timestamp? = null,
 ) {

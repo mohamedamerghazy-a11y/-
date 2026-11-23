@@ -43,6 +43,9 @@ class AlemanCashViewModel(application: Application) : AndroidViewModel(applicati
   private val _staffLabel = MutableStateFlow("")
   val staffLabel: StateFlow<String> = _staffLabel.asStateFlow()
 
+  private val _activeDeviceName = MutableStateFlow("")
+  val activeDeviceName: StateFlow<String> = _activeDeviceName.asStateFlow()
+
   private val _pendingOrders = MutableStateFlow<List<PendingTransferOrder>>(emptyList())
   val pendingOrders: StateFlow<List<PendingTransferOrder>> = _pendingOrders.asStateFlow()
 
@@ -74,6 +77,7 @@ class AlemanCashViewModel(application: Application) : AndroidViewModel(applicati
       }
       _authState.value = state
       _staffLabel.value = label
+      _activeDeviceName.value = repository.activeDeviceName
       if (state == StaffAuthState.Authorized) {
         attachFirestoreListeners()
       } else {
@@ -108,6 +112,7 @@ class AlemanCashViewModel(application: Application) : AndroidViewModel(applicati
     _cloudLogs.value = emptyList()
     _authState.value = StaffAuthState.SignedOut
     _staffLabel.value = ""
+    _activeDeviceName.value = ""
     viewModelScope.launch {
       repository.signOut()
     }
@@ -130,11 +135,15 @@ class AlemanCashViewModel(application: Application) : AndroidViewModel(applicati
               settings = currentSettings,
               notifyUser = false
             )
-            if (!resultMsg.contains("تم تجاهل") && !resultMsg.contains("تم تخطيها")) {
+            if (resultMsg != null) {
               processed++
             }
           }
-          "تم فحص ${smsList.size} رسالة من الهاتف ومطابقة/معالجة $processed عملية دفع."
+          if (processed == 0) {
+            "لا توجد رسائل تحويل كاش واردة جديدة في صندوق الوارد."
+          } else {
+            "تم فحص رسائل المحافظ ومعالجة $processed عملية تحويل واردة."
+          }
         }
       }
       _isBusy.value = false

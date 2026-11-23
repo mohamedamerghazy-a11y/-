@@ -130,8 +130,8 @@ fun BrandShowcaseScreen(
   onAddToCart: (Product) -> Unit,
   onToggleWishlist: (String) -> Unit,
 ) {
-  val showcase = remember(catalogState.brandShowcases, showcaseId) {
-    catalogState.brandShowcases.firstOrNull { it.id == showcaseId }
+  val showcase = remember(catalogState.brandShowcases, catalogState.companies, showcaseId) {
+    catalogState.resolveBrandShowcase(showcaseId)
   }
   var selectedCategoryId by rememberSaveable(showcaseId) { mutableStateOf<String?>(null) }
   var searchQuery by rememberSaveable(showcaseId) { mutableStateOf("") }

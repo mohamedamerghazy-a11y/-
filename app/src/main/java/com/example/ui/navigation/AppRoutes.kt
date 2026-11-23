@@ -67,7 +67,7 @@ sealed interface AppRoute {
   data object AdminDeliveryZones : AppRoute
 
   @Serializable
-  data object AdminPayments : AppRoute
+  data class AdminPayments(val focusOrderId: String? = null) : AppRoute
 
   @Serializable
   data object AdminBanners : AppRoute
@@ -85,7 +85,7 @@ sealed interface AppRoute {
   data class DeliveryDriverOrders(val focusedOrderId: String? = null) : AppRoute
 
   @Serializable
-  data object AdminStoreSettings : AppRoute
+  data class AdminStoreSettings(val initialTab: Int = 0) : AppRoute
 
   @Serializable
   data class BrandShowcase(val showcaseId: String) : AppRoute

@@ -88,7 +88,10 @@ data class CashVerificationLogItem(
   val status: String,
   val reason: String,
   val rawBodyPreview: String,
-  val createdAtMillis: Long
+  val createdAtMillis: Long,
+  val verifiedByDeviceName: String = "",
+  val verifiedByEmail: String = "",
+  val isSettled: Boolean = false
 )
 
 data class LocalVerificationEvent(

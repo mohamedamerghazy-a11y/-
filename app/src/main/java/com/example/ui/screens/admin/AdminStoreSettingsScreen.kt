@@ -95,6 +95,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -105,9 +112,13 @@ import com.example.core.util.ArabicFormatter
 import com.example.data.media.CloudinaryFolder
 import com.example.data.model.AppIconTheme
 import com.example.data.model.BannerPlacement
+import com.example.data.model.BrandShowcase
 import com.example.data.model.CategoriesTabStyle
+import com.example.data.model.Category
 import com.example.data.model.CompanyOfferBadgeStyle
 import com.example.data.model.IntroMediaType
+import com.example.data.model.IntroReelTargetType
+import com.example.data.model.Product
 import com.example.data.model.TickerFontWeight
 import com.example.ui.components.AnimatedImagePickerUploadField
 import com.example.data.model.HomeCategoryStyle
@@ -137,8 +148,12 @@ import com.example.ui.theme.PrimaryYellow
 import com.example.ui.theme.PrimaryYellowSoft
 import com.example.ui.theme.PureWhite
 import com.example.ui.theme.RoyalBlue
+import com.example.data.model.CashVerifierAccount
 import com.example.ui.theme.TextSecondary
+import com.example.ui.viewmodel.AdminCashTrackingUiState
 import com.example.ui.viewmodel.AdminStoreSettingsUiState
+import com.example.ui.viewmodel.CashDateFilterMode
+import com.example.ui.viewmodel.CashDeviceSummary
 
 private enum class StoreSettingsSection {
   GENERAL_AND_OWNER,
@@ -169,7 +184,30 @@ fun AdminStoreSettingsScreen(
   canToggleWholesalePreview: Boolean = false,
   isWholesalePreviewActive: Boolean = false,
   onToggleWholesalePreview: () -> Unit = {},
+  initialTab: Int = 0,
+  canEditStoreSettings: Boolean = true,
+  canManageCashAccounts: Boolean = true,
+  canSettleCashDevice: Boolean = false,
+  actorDisplayName: String = "",
+  cashTrackingUiState: AdminCashTrackingUiState = AdminCashTrackingUiState(isLoading = false),
+  onSelectCashFilterMode: (CashDateFilterMode) -> Unit = {},
+  onSelectCashSingleDay: (Long) -> Unit = {},
+  onSelectCashDateRange: (Long, Long) -> Unit = { _, _ -> },
+  onSaveCashAccount: (email: String, deviceName: String, phoneNumber: String?, isActive: Boolean, isEdit: Boolean) -> Unit = { _, _, _, _, _ -> },
+  onToggleCashAccount: (CashVerifierAccount) -> Unit = {},
+  onDeleteCashAccount: (CashVerifierAccount) -> Unit = {},
+  onSettleCashDevice: (CashDeviceSummary, String, String?) -> Unit = { _, _, _ -> },
+  onExportCashExcelToUri: (Uri) -> Unit = {},
+  onShareCashExcel: ((Intent) -> Unit) -> Unit = {},
+  onClearCashMessages: () -> Unit = {},
+  reelCategories: List<Category> = emptyList(),
+  reelProducts: List<Product> = emptyList(),
+  reelBrandShowcases: List<BrandShowcase> = emptyList(),
 ) {
+  var selectedTab by rememberSaveable(initialTab, canEditStoreSettings) {
+    mutableIntStateOf(if (!canEditStoreSettings) 1 else initialTab.coerceIn(0, 1))
+  }
+  val effectiveTab = if (!canEditStoreSettings) 1 else selectedTab
   var expandedSection by rememberSaveable { mutableStateOf<StoreSettingsSection?>(null) }
   var editingCompany by remember { mutableStateOf<StoreCompany?>(null) }
   var showCompanyDialog by remember { mutableStateOf(false) }
@@ -219,6 +257,9 @@ fun AdminStoreSettingsScreen(
   }
   var introVideoTitle by remember(uiState.settings) { mutableStateOf(uiState.settings.introVideoTitle) }
   var introVideoMuted by remember(uiState.settings) { mutableStateOf(uiState.settings.introVideoMuted) }
+  var introReelTargetType by remember(uiState.settings) { mutableStateOf(uiState.settings.introReelTargetTypeEnum) }
+  var introReelTargetId by remember(uiState.settings) { mutableStateOf(uiState.settings.introReelTargetId) }
+  var introReelTargetLabel by remember(uiState.settings) { mutableStateOf(uiState.settings.introReelTargetLabel) }
 
   val initialTicker = uiState.settings.announcementTickerConfig
   var tickerEnabled by remember(uiState.settings) { mutableStateOf(initialTicker.enabled) }
@@ -323,6 +364,9 @@ fun AdminStoreSettingsScreen(
       introVideoDurationSeconds = (introVideoDurationText.toIntOrNull() ?: 0).coerceIn(0, 120),
       introVideoTitle = introVideoTitle.trim().take(100),
       introVideoMuted = introVideoMuted,
+      introReelTargetType = introReelTargetType.code,
+      introReelTargetId = if (introReelTargetType == IntroReelTargetType.PROMO_ONLY) "" else introReelTargetId.trim().take(120),
+      introReelTargetLabel = if (introReelTargetType == IntroReelTargetType.PROMO_ONLY) "" else introReelTargetLabel.trim().take(120),
       tickerEnabled = tickerEnabled,
       tickerText = tickerText.trim().take(1000),
       tickerPlacement = tickerPlacement.code,
@@ -361,34 +405,110 @@ fun AdminStoreSettingsScreen(
     }
   }
 
+  LaunchedEffect(cashTrackingUiState.feedbackMessage, cashTrackingUiState.errorMessage) {
+    val msg = cashTrackingUiState.feedbackMessage ?: cashTrackingUiState.errorMessage
+    if (!msg.isNullOrBlank()) {
+      snackbarHostState.showSnackbar(msg)
+      onClearCashMessages()
+    }
+  }
+
   Scaffold(
     containerColor = GeneralBackground,
     contentWindowInsets = WindowInsets.safeDrawing,
     snackbarHost = { AlEmanSnackbarHost(hostState = snackbarHostState) },
     topBar = {
       AlEmanTopBar(
-        title = "إعدادات المتجر والإشعارات",
-        subtitle = "اضغط على أي قسم لفتحه وتعديل وحفظ إعداداته",
+        title = if (effectiveTab == 1) "متابعة تحويلات الكاش" else "إعدادات المتجر والإشعارات",
+        subtitle = if (effectiveTab == 1) {
+          "أرصدة هواتف الإيمان كاش، التصفية بالتاريخ، السحب والتصدير"
+        } else {
+          "اضغط على أي قسم لفتحه وتعديل وحفظ إعداداته"
+        },
         showBack = true,
         onBackClick = onBackClick,
       )
     },
   ) { innerPadding ->
-    Box(
+    Column(
       modifier = Modifier
         .fillMaxSize()
         .padding(innerPadding),
-      contentAlignment = Alignment.TopCenter,
+      horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-      if (uiState.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-          CircularProgressIndicator(color = CharcoalBlack)
+      if (canEditStoreSettings) {
+        TabRow(
+          selectedTabIndex = effectiveTab,
+          containerColor = PureWhite,
+          contentColor = CharcoalBlack,
+          indicator = { tabPositions ->
+            TabRowDefaults.SecondaryIndicator(
+              modifier = Modifier.tabIndicatorOffset(tabPositions[effectiveTab]),
+              color = PrimaryYellow,
+            )
+          },
+          modifier = Modifier.widthIn(max = 840.dp),
+        ) {
+          Tab(
+            selected = effectiveTab == 0,
+            onClick = { selectedTab = 0 },
+            modifier = Modifier.testTag("settings_tab_general"),
+            text = {
+              Text(
+                text = "إعدادات المتجر",
+                fontWeight = if (effectiveTab == 0) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            },
+          )
+          Tab(
+            selected = effectiveTab == 1,
+            onClick = { selectedTab = 1 },
+            modifier = Modifier.testTag("settings_tab_cash_tracking"),
+            text = {
+              Text(
+                text = "متابعة تحويلات الكاش",
+                fontWeight = if (effectiveTab == 1) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            },
+          )
         }
-      } else {
-        LazyColumn(
-          modifier = Modifier
-            .widthIn(max = 840.dp)
-            .fillMaxSize(),
+      }
+
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .weight(1f),
+        contentAlignment = Alignment.TopCenter,
+      ) {
+        if (effectiveTab == 1) {
+          CashTrackingSettingsTab(
+            uiState = cashTrackingUiState,
+            canManageCashAccounts = canManageCashAccounts,
+            canSettleCashDevice = canSettleCashDevice,
+            actorDisplayName = actorDisplayName,
+            onSelectFilterMode = onSelectCashFilterMode,
+            onSelectSingleDay = onSelectCashSingleDay,
+            onSelectDateRange = onSelectCashDateRange,
+            onSaveCashAccount = onSaveCashAccount,
+            onToggleCashAccount = onToggleCashAccount,
+            onDeleteCashAccount = onDeleteCashAccount,
+            onSettleDevice = onSettleCashDevice,
+            onExportExcelToUri = onExportCashExcelToUri,
+            onShareExcel = onShareCashExcel,
+          )
+        } else if (uiState.isLoading) {
+          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = CharcoalBlack)
+          }
+        } else {
+          LazyColumn(
+            modifier = Modifier
+              .widthIn(max = 840.dp)
+              .fillMaxSize(),
           contentPadding = PaddingValues(AlEmanDimens.SpaceLg),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -810,9 +930,18 @@ fun AdminStoreSettingsScreen(
               introVideoEnabled && activeMediaUrl.length >= 5 -> {
                 val dur = introVideoDurationText.toIntOrNull() ?: 0
                 val typeLabel = if (introMediaType == IntroMediaType.ANIMATED_IMAGE) "صورة متحركة" else "فيديو ريلز"
-                if (dur > 0) "مفعّل ($typeLabel) • المدة: $dur ثانية"
-                else if (introMediaType == IntroMediaType.ANIMATED_IMAGE) "مفعّل ($typeLabel) • ٥ ثوانٍ افتراضيًا"
-                else "مفعّل ($typeLabel) • يتعرف على المدة تلقائيًا"
+                val durText = when {
+                  dur > 0 -> "المدة: $dur ثانية"
+                  introMediaType == IntroMediaType.ANIMATED_IMAGE -> "٥ ثوانٍ افتراضيًا"
+                  else -> "مدة تلقائية"
+                }
+                val actionText = if (introReelTargetType == IntroReelTargetType.PROMO_ONLY || introReelTargetId.isBlank()) {
+                  "دعائي فقط"
+                } else {
+                  val targetName = introReelTargetLabel.trim().ifEmpty { introReelTargetType.arabicLabel }
+                  "تحويل: $targetName"
+                }
+                "مفعّل ($typeLabel) • $durText • $actionText"
               }
               activeMediaUrl.length >= 5 -> "مرفوع (متوقف مؤقتًا)"
               else -> "غير مفعّل — أضف فيديو ريلز قصير أو صورة متحركة (GIF / WebP) بعد شاشة البداية"
@@ -1001,6 +1130,29 @@ fun AdminStoreSettingsScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+              )
+
+              HorizontalDivider(color = BorderNeutral.copy(alpha = 0.7f))
+
+              IntroReelTargetSelector(
+                targetType = introReelTargetType,
+                targetId = introReelTargetId,
+                targetLabel = introReelTargetLabel,
+                categories = reelCategories,
+                products = reelProducts,
+                companies = uiState.companies,
+                brandShowcases = reelBrandShowcases,
+                onTargetTypeChange = { nextType ->
+                  if (introReelTargetType != nextType) {
+                    introReelTargetType = nextType
+                    introReelTargetId = ""
+                    introReelTargetLabel = ""
+                  }
+                },
+                onSelectTarget = { selectedId, selectedLabel ->
+                  introReelTargetId = selectedId
+                  introReelTargetLabel = selectedLabel
+                },
               )
 
               SectionSaveButton(
@@ -1468,7 +1620,7 @@ fun AdminStoreSettingsScreen(
                 onCheckedChange = { showHeroSection = it },
               )
 
-              AnimatedVisibility(visible = showHeroSection) {
+              androidx.compose.animation.AnimatedVisibility(visible = showHeroSection) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                   OutlinedTextField(
                     value = heroBadgeText,
@@ -1943,6 +2095,7 @@ fun AdminStoreSettingsScreen(
         }
       }
     }
+  }
   }
 
   if (showCompanyDialog) {

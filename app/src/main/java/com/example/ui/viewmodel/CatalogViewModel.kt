@@ -138,8 +138,32 @@ data class CatalogUiState(
 
   fun isStockAlertEnabled(productId: String): Boolean = productId in stockAlertProductIds
 
+  fun resolveBrandShowcase(showcaseOrCompanyId: String): BrandShowcase? {
+    val cleanId = showcaseOrCompanyId.trim()
+    if (cleanId.isEmpty()) return null
+    brandShowcases.firstOrNull { it.id == cleanId }?.let { return it }
+
+    val companyId = cleanId.removePrefix("company:")
+    brandShowcases
+      .firstOrNull { it.isActive && it.companyId == companyId }
+      ?.let { return it }
+    brandShowcases
+      .firstOrNull { it.companyId == companyId }
+      ?.let { return it }
+
+    val company = companies.firstOrNull { it.id == companyId } ?: return null
+    return BrandShowcase(
+      id = "company:${company.id}",
+      title = company.name,
+      subtitle = "جميع منتجات ${company.name}",
+      companyId = company.id,
+      companyImageUrl = company.imageUrl.ifBlank { null },
+      isActive = true,
+    )
+  }
+
   fun productsForBrandShowcase(showcaseId: String, categoryFilterId: String? = null): List<Product> {
-    val showcase = brandShowcases.firstOrNull { it.id == showcaseId } ?: return emptyList()
+    val showcase = resolveBrandShowcase(showcaseId) ?: return emptyList()
     val showcaseProducts = products.filter { it.matchesBrandShowcase(showcase) }
     if (categoryFilterId.isNullOrBlank()) return showcaseProducts
     return if (showcase.categories.isNotEmpty()) {

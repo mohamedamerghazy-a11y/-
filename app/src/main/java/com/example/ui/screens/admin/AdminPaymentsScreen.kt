@@ -27,9 +27,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,6 +70,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.model.OrderStatus
 import com.example.core.util.ArabicFormatter
@@ -79,7 +82,6 @@ import com.example.ui.components.AlEmanSnackbarHost
 import com.example.ui.components.AlEmanTopBar
 import com.example.ui.components.BrandPillBadge
 import com.example.ui.components.DiscountBadge
-import com.example.ui.components.ProductThumbnail
 import com.example.ui.components.StoreEmptyStateCard
 import com.example.ui.components.SuccessBadge
 import com.example.ui.components.ZoomableImagePreviewDialog
@@ -93,6 +95,7 @@ import com.example.ui.theme.PrimaryYellow
 import com.example.ui.theme.PrimaryYellowSoft
 import com.example.ui.theme.PureWhite
 import com.example.ui.theme.SuccessGreen
+import com.example.ui.theme.SuccessGreenSoft
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.AdminPaymentsUiState
@@ -103,7 +106,7 @@ import java.util.Locale
 
 private val PAYMENT_FILTERS = listOf(
   null to "الكل",
-  "pending_review" to "قيد المراجعة",
+  "pending_review" to "بانتظار التأكيد",
   "verified" to "تم التأكيد",
   "rejected" to "مرفوض",
   "has_receipt" to "تحتوي على إيصال",
@@ -119,12 +122,34 @@ fun AdminPaymentsScreen(
   onSaveSettings: (StorePaymentSettings) -> Unit,
   onClearMessages: () -> Unit,
   onBackClick: () -> Unit,
+  focusOrderId: String? = null,
   onOpenAlemanCashPreview: (() -> Unit)? = null,
+  canViewCashTracking: Boolean = false,
+  onOpenCashTracking: (() -> Unit)? = null,
 ) {
   var selectedTab by remember { mutableIntStateOf(0) }
+  var reviewingOrderId by remember { mutableStateOf<String?>(null) }
+  var handledFocusOrderId by remember { mutableStateOf<String?>(null) }
   var previewReceiptOrder by remember { mutableStateOf<Order?>(null) }
   var deletingReceiptOrder by remember { mutableStateOf<Order?>(null) }
   var showBatchCleanupDialog by remember { mutableStateOf(false) }
+
+  val visibleLogsCount = remember(uiState.cashVerificationLogs) {
+    uiState.cashVerificationLogs.count { !it.status.startsWith("ignored") }
+  }
+  val reviewingOrder = remember(reviewingOrderId, uiState.orders) {
+    reviewingOrderId?.let { targetId -> uiState.orders.firstOrNull { it.id == targetId } }
+  }
+
+  LaunchedEffect(focusOrderId, uiState.orders) {
+    val targetId = focusOrderId?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+    if (handledFocusOrderId == targetId) return@LaunchedEffect
+    if (uiState.orders.any { it.id == targetId }) {
+      selectedTab = 0
+      reviewingOrderId = targetId
+      handledFocusOrderId = targetId
+    }
+  }
 
   val snackbarHostState = remember { SnackbarHostState() }
 
@@ -177,7 +202,12 @@ fun AdminPaymentsScreen(
             text = {
               Text(
                 text = "التحويلات (${uiState.transferOrders.size})",
-                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                style = MaterialTheme.typography.labelLarge.copy(
+                  fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
+                ),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
               )
             },
           )
@@ -186,8 +216,13 @@ fun AdminPaymentsScreen(
             onClick = { selectedTab = 1 },
             text = {
               Text(
-                text = "التحقق الآلي (${uiState.cashVerificationLogs.size})",
-                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                text = "التحقق الآلي ($visibleLogsCount)",
+                style = MaterialTheme.typography.labelLarge.copy(
+                  fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
+                ),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
               )
             },
           )
@@ -197,7 +232,12 @@ fun AdminPaymentsScreen(
             text = {
               Text(
                 text = "وسائل الدفع",
-                fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Normal,
+                style = MaterialTheme.typography.labelLarge.copy(
+                  fontWeight = if (selectedTab == 2) FontWeight.Bold else FontWeight.Medium,
+                ),
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
               )
             },
           )
@@ -219,40 +259,53 @@ fun AdminPaymentsScreen(
                   border = BorderStroke(1.dp, PrimaryYellow),
                   modifier = Modifier.fillMaxWidth(),
                 ) {
-                  Row(
+                  Column(
                     modifier = Modifier
                       .fillMaxWidth()
                       .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                   ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                      Text(
-                        text = "الإيصالات المرفقة: ${uiState.ordersWithReceiptsCount} إيصال",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                        color = CharcoalBlack,
-                      )
-                      Text(
-                        text = "يمكنك حذف أي إيصال مباشرة أو حذف إيصالات مدة معينة",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
-                      )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                      onClick = { showBatchCleanupDialog = true },
-                      enabled = uiState.ordersWithReceiptsCount > 0 && !uiState.isSubmitting,
-                      colors = ButtonDefaults.buttonColors(
-                        containerColor = CharcoalBlack,
-                        contentColor = PrimaryYellow,
-                      ),
-                      shape = RoundedCornerShape(AlEmanDimens.RadiusSm),
-                      contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                      modifier = Modifier.testTag("admin_cleanup_receipts_button"),
+                    Row(
+                      modifier = Modifier.fillMaxWidth(),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically,
                     ) {
-                      Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
-                      Spacer(modifier = Modifier.width(6.dp))
-                      Text("حذف بالمدة", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                      Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                          text = "الإيصالات المرفقة: ${uiState.ordersWithReceiptsCount} إيصال",
+                          style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                          color = CharcoalBlack,
+                          maxLines = 1,
+                          overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                          text = "يمكنك معاينة كل إيصال أو حذف الإيصالات القديمة لتوفير المساحة",
+                          style = MaterialTheme.typography.labelSmall,
+                          color = TextSecondary,
+                        )
+                      }
+                      Spacer(modifier = Modifier.width(10.dp))
+                      Button(
+                        onClick = { showBatchCleanupDialog = true },
+                        enabled = uiState.ordersWithReceiptsCount > 0 && !uiState.isSubmitting,
+                        colors = ButtonDefaults.buttonColors(
+                          containerColor = CharcoalBlack,
+                          contentColor = PrimaryYellow,
+                        ),
+                        shape = RoundedCornerShape(AlEmanDimens.RadiusSm),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("admin_cleanup_receipts_button"),
+                      ) {
+                        Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                          text = "حذف بالمدة",
+                          fontWeight = FontWeight.Bold,
+                          style = MaterialTheme.typography.labelMedium,
+                          maxLines = 1,
+                          softWrap = false,
+                        )
+                      }
                     }
                   }
                 }
@@ -324,6 +377,7 @@ fun AdminPaymentsScreen(
                       onReject = {
                         onUpdatePaymentStatus(order.id, "rejected", order.statusEnum, "لم يتم التحقق من التحويل")
                       },
+                      onOpenFullDetails = { reviewingOrderId = order.id },
                       onViewReceipt = { previewReceiptOrder = order },
                       onDeleteReceipt = { deletingReceiptOrder = order },
                     )
@@ -337,6 +391,8 @@ fun AdminPaymentsScreen(
             CashVerificationLogsTabContent(
               logs = uiState.cashVerificationLogs,
               onOpenAlemanCashPreview = onOpenAlemanCashPreview,
+              canViewCashTracking = canViewCashTracking,
+              onOpenCashTracking = onOpenCashTracking,
             )
           }
 
@@ -350,6 +406,24 @@ fun AdminPaymentsScreen(
         }
       }
     }
+  }
+
+  if (reviewingOrder != null) {
+    PaymentOrderReviewDialog(
+      order = reviewingOrder,
+      isSubmitting = uiState.isSubmitting,
+      onDismiss = { reviewingOrderId = null },
+      onApprove = {
+        onUpdatePaymentStatus(reviewingOrder.id, "verified", reviewingOrder.statusEnum, "تم تأكيد استلام التحويل")
+        reviewingOrderId = null
+      },
+      onReject = {
+        onUpdatePaymentStatus(reviewingOrder.id, "rejected", reviewingOrder.statusEnum, "لم يتم التحقق من التحويل")
+        reviewingOrderId = null
+      },
+      onViewReceiptFullscreen = { previewReceiptOrder = reviewingOrder },
+      onDeleteReceipt = { deletingReceiptOrder = reviewingOrder },
+    )
   }
 
   val activePreview = previewReceiptOrder
@@ -408,198 +482,6 @@ fun AdminPaymentsScreen(
         onDeleteReceiptsBatch(scope, days)
       },
     )
-  }
-}
-
-@Composable
-private fun PaymentReviewCard(
-  order: Order,
-  isSubmitting: Boolean,
-  onApprove: () -> Unit,
-  onReject: () -> Unit,
-  onViewReceipt: () -> Unit,
-  onDeleteReceipt: () -> Unit,
-) {
-  val dateText = remember(order.createdAt) {
-    order.createdAt?.toDate()?.let { date ->
-      SimpleDateFormat("dd/MM/yyyy • hh:mm a", Locale.forLanguageTag("ar-EG")).format(date)
-    } ?: "حديث"
-  }
-
-  AlEmanCard(modifier = Modifier.fillMaxWidth()) {
-    Column(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = "طلب ${order.orderNumber}",
-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-            color = CharcoalBlack,
-          )
-          Text(
-            text = "العميل: ${order.customerName} (${order.phone})",
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary,
-          )
-          Text(
-            text = "التاريخ: $dateText",
-            style = MaterialTheme.typography.labelSmall,
-            color = TextSecondary,
-          )
-        }
-        when (order.paymentStatus) {
-          "verified" -> SuccessBadge("تم التأكيد")
-          "rejected" -> DiscountBadge("مرفوض")
-          else -> BrandPillBadge(
-            text = "قيد المراجعة",
-            containerColor = PrimaryYellow,
-            contentColor = CharcoalBlack,
-          )
-        }
-      }
-
-      HorizontalDivider(color = BorderNeutral)
-
-      Text(
-        text = "طريقة الدفع: ${order.paymentMethodEnum.arabicLabel}",
-        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-        color = TextPrimary,
-      )
-
-      if (!order.displaySenderPhone.isNullOrBlank()) {
-        Text(
-          text = "الرقم المحوَّل منه: ${order.displaySenderPhone}",
-          style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-          color = CharcoalBlack,
-        )
-      }
-
-      Text(
-        text = "المبلغ المطلوب: ${ArabicFormatter.formatCurrency(order.totalAmount)}",
-        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-        color = SuccessGreen,
-      )
-
-      // قسم إيصال الدفع المرفق مع خيار المعاينة والحذف في أي وقت
-      if (!order.receiptImageUrl.isNullOrBlank()) {
-        Surface(
-          shape = RoundedCornerShape(AlEmanDimens.RadiusSm),
-          color = GeneralBackground,
-          border = BorderStroke(1.dp, BorderNeutral),
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-          ) {
-            Box(
-              modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(PureWhite)
-                .clickable(onClick = onViewReceipt),
-            ) {
-              ProductThumbnail(
-                imageUrl = order.receiptImageUrl,
-                contentDescription = "إيصال طلب ${order.orderNumber}",
-                modifier = Modifier.fillMaxSize(),
-              )
-              Surface(
-                shape = RoundedCornerShape(4.dp),
-                color = CharcoalBlack.copy(alpha = 0.8f),
-                modifier = Modifier
-                  .align(Alignment.BottomEnd)
-                  .padding(2.dp),
-              ) {
-                Icon(
-                  imageVector = Icons.Filled.ZoomIn,
-                  contentDescription = null,
-                  tint = PrimaryYellow,
-                  modifier = Modifier
-                    .padding(2.dp)
-                    .size(13.dp),
-                )
-              }
-            }
-            Column(
-              modifier = Modifier.weight(1f),
-              verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-              ) {
-                Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
-                Text(
-                  text = "صورة إيصال التحويل مرفقة",
-                  style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-                  color = CharcoalBlack,
-                )
-              }
-              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                  onClick = onViewReceipt,
-                  shape = RoundedCornerShape(AlEmanDimens.RadiusSm),
-                  border = BorderStroke(1.dp, CharcoalBlack),
-                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                  modifier = Modifier.testTag("admin_view_receipt_${order.id}"),
-                ) {
-                  Text("عرض الإيصال", color = CharcoalBlack, style = MaterialTheme.typography.labelMedium)
-                }
-                OutlinedButton(
-                  onClick = onDeleteReceipt,
-                  enabled = !isSubmitting,
-                  shape = RoundedCornerShape(AlEmanDimens.RadiusSm),
-                  border = BorderStroke(1.dp, DiscountRed),
-                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                  modifier = Modifier.testTag("admin_delete_receipt_${order.id}"),
-                ) {
-                  Icon(Icons.Filled.Delete, contentDescription = null, tint = DiscountRed, modifier = Modifier.size(15.dp))
-                  Spacer(modifier = Modifier.width(4.dp))
-                  Text("حذف الإيصال", color = DiscountRed, style = MaterialTheme.typography.labelMedium)
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (order.paymentStatus == "pending_review") {
-        HorizontalDivider(color = BorderNeutral)
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          Button(
-            onClick = onApprove,
-            enabled = !isSubmitting,
-            modifier = Modifier.weight(1f),
-            colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen),
-          ) {
-            Text("تأكيد استلام المبلغ", color = PureWhite)
-          }
-          OutlinedButton(
-            onClick = onReject,
-            enabled = !isSubmitting,
-            modifier = Modifier.weight(1f),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = DiscountRed),
-          ) {
-            Text("رفض التحويل")
-          }
-        }
-      }
-    }
   }
 }
 
@@ -870,12 +752,39 @@ private fun PaymentSettingsEditor(
 private fun CashVerificationLogsTabContent(
   logs: List<CashVerificationLog>,
   onOpenAlemanCashPreview: (() -> Unit)? = null,
+  canViewCashTracking: Boolean = false,
+  onOpenCashTracking: (() -> Unit)? = null,
 ) {
+  val visibleLogs = remember(logs) { logs.filterNot { it.status.startsWith("ignored") } }
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(16.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),
   ) {
+    if (canViewCashTracking && onOpenCashTracking != null) {
+      item {
+        Button(
+          onClick = onOpenCashTracking,
+          colors = ButtonDefaults.buttonColors(
+            containerColor = SuccessGreen,
+            contentColor = PureWhite,
+          ),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .testTag("payments_open_cash_tracking_button"),
+        ) {
+          Icon(Icons.Filled.AccountBalanceWallet, contentDescription = null)
+          Spacer(Modifier.width(8.dp))
+          Text(
+            text = "متابعة تحويلات الكاش وتصدير الإكسيل",
+            fontWeight = FontWeight.Bold,
+          )
+        }
+      }
+    }
+
     if (onOpenAlemanCashPreview != null) {
       item {
         Button(
@@ -900,7 +809,7 @@ private fun CashVerificationLogsTabContent(
       }
     }
 
-    if (logs.isEmpty()) {
+    if (visibleLogs.isEmpty()) {
       item {
         StoreEmptyStateCard(
           icon = Icons.Filled.Payments,
@@ -911,7 +820,7 @@ private fun CashVerificationLogsTabContent(
       return@LazyColumn
     }
 
-    items(logs, key = { it.id }) { log ->
+    items(visibleLogs, key = { it.id }) { log ->
       val dateStr = remember(log.createdAt) {
         log.createdAt?.toDate()?.let { date ->
           SimpleDateFormat("dd/MM/yyyy • hh:mm a", Locale.forLanguageTag("ar-EG")).format(date)
@@ -933,9 +842,10 @@ private fun CashVerificationLogsTabContent(
               text = log.providerName.ifBlank { log.senderAddress.ifBlank { "محفظة إلكترونية" } },
               style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
               color = CharcoalBlack,
+              modifier = Modifier.weight(1f),
             )
             when (log.status) {
-              "matched" -> SuccessBadge("تم التأكيد الآلي")
+              "matched", "verified" -> SuccessBadge("تم التأكيد الآلي")
               "duplicate" -> BrandPillBadge(
                 text = "عملية مكررة",
                 containerColor = PrimaryYellowSoft,
@@ -954,6 +864,31 @@ private fun CashVerificationLogsTabContent(
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
             color = TextPrimary,
           )
+          if (log.verifiedByDeviceName.isNotBlank()) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.PhoneAndroid,
+                contentDescription = null,
+                tint = SuccessGreen,
+                modifier = Modifier.size(15.dp),
+              )
+              Text(
+                text = "الهاتف: ${log.verifiedByDeviceName}",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = SuccessGreen,
+              )
+              if (log.isVerifiedOperation) {
+                BrandPillBadge(
+                  text = if (log.isSettled) "تم السحب" else "رصيد قائم",
+                  containerColor = if (log.isSettled) GeneralBackground else PrimaryYellowSoft,
+                  contentColor = if (log.isSettled) TextSecondary else CharcoalBlack,
+                )
+              }
+            }
+          }
           if (!log.matchedOrderNumber.isNullOrBlank()) {
             Text(
               text = "تم ربطه بالطلب: #${log.matchedOrderNumber}",

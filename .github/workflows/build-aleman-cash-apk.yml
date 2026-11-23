@@ -1,4 +1,4 @@
-name: Build Al-Eman Cash APK
+name: Build Standalone Al-Eman Cash APK
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-aleman-cash-apk:
-    name: Build Standalone Al-Eman Cash APK
+    name: Build Standalone Al-Eman Cash APK (الإيمان كاش)
     runs-on: ubuntu-latest
 
     steps:
@@ -63,11 +63,11 @@ jobs:
           echo "/tmp/gradle-9.3.1/bin" >> "$GITHUB_PATH"
           /tmp/gradle-9.3.1/bin/gradle --version
 
-      - name: Build Al-Eman Cash Debug APK
+      - name: Test and Build Al-Eman Cash Debug APK
         working-directory: aleman-cash-app
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Verify APK Signing Fingerprint and Prepare Download
+      - name: Verify Cash APK Signature and Prepare Download
         run: |
           mkdir -p dist-apk
           cp aleman-cash-app/app/build/outputs/apk/debug/app-debug.apk dist-apk/aleman-cash.apk

@@ -11,6 +11,7 @@ import com.example.data.model.BannerStyle
 import com.example.data.model.BannerTargetType
 import com.example.data.model.BrandShowcase
 import com.example.data.model.BrandShowcaseCategory
+import com.example.data.model.IntroReelTargetType
 import com.example.data.model.StoreCompany
 import com.example.data.model.StoreContactChannel
 import com.example.data.model.StoreGeneralSettings
@@ -439,6 +440,17 @@ class BannerAndStoreRepository(
         "introVideoDurationSeconds" to settings.introVideoDurationSeconds.coerceIn(0, 120),
         "introVideoTitle" to settings.introVideoTitle.trim().take(100),
         "introVideoMuted" to settings.introVideoMuted,
+        "introReelTargetType" to settings.introReelTargetTypeEnum.code,
+        "introReelTargetId" to if (settings.introReelTargetTypeEnum == IntroReelTargetType.PROMO_ONLY) {
+          ""
+        } else {
+          settings.introReelTargetId.trim().take(120)
+        },
+        "introReelTargetLabel" to if (settings.introReelTargetTypeEnum == IntroReelTargetType.PROMO_ONLY) {
+          ""
+        } else {
+          settings.introReelTargetLabel.trim().take(120)
+        },
         "tickerEnabled" to settings.tickerEnabled,
         "tickerText" to settings.tickerText.trim().take(1000),
         "tickerPlacement" to settings.announcementTickerConfig.placement.code,

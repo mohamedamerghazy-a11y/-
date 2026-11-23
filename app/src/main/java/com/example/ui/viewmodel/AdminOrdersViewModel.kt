@@ -113,10 +113,13 @@ class AdminOrdersViewModel(
     paymentStatus: String? = null,
   ) {
     val targetOrder = _uiState.value.orders.firstOrNull { it.id == orderId }
+    val wasAlreadyVerified = targetOrder?.paymentStatus == "verified"
+    val wasAlreadyReady = targetOrder?.statusEnum == OrderStatus.READY_FOR_DELIVERY
     viewModelScope.launch {
       _uiState.update { it.copy(isSubmitting = true, errorMessage = null, feedbackMessage = null) }
       val statusLabel = newStatus.labelFor(targetOrder?.isStorePickup == true)
       val result = orderRepository.updateOrderStatus(orderId, newStatus, statusNote, paymentStatus)
+      var notifiedDriversCount = 0
       if (result.isSuccess && targetOrder != null && notificationRepository != null) {
         val noteLine = statusNote?.trim()?.takeIf { it.isNotEmpty() }?.let { "\nملاحظة: $it" }.orEmpty()
         runCatching {
@@ -128,13 +131,46 @@ class AdminOrdersViewModel(
             referenceId = orderId,
           )
         }
+        if (paymentStatus == "verified" && !wasAlreadyVerified) {
+          runCatching {
+            notificationRepository.notifyOrderPreparationStaff(
+              orderId = orderId,
+              orderNumber = targetOrder.orderNumber,
+              customerName = targetOrder.customerName.ifBlank { targetOrder.recipientName },
+              totalAmount = targetOrder.totalAmount,
+              confirmationSummary = "تأكيد يدوي من إدارة الطلبات",
+            )
+          }
+        }
+        if (
+          newStatus == OrderStatus.READY_FOR_DELIVERY &&
+          !wasAlreadyReady &&
+          !targetOrder.isStorePickup &&
+          targetOrder.assignedDriverId.isNullOrBlank()
+        ) {
+          val locationText = buildString {
+            append(targetOrder.governorate)
+            if (targetOrder.city.isNotBlank()) append(" - ${targetOrder.city}")
+            if (targetOrder.streetAddress.isNotBlank()) append(" - ${targetOrder.streetAddress}")
+          }
+          notifiedDriversCount = runCatching {
+            notificationRepository.notifyDeliveryDriversOrderReady(
+              orderId = orderId,
+              orderNumber = targetOrder.orderNumber,
+              recipientName = targetOrder.recipientName.ifBlank { targetOrder.customerName },
+              totalAmount = targetOrder.totalAmount,
+              locationText = locationText,
+            ).getOrDefault(0)
+          }.getOrDefault(0)
+        }
       }
       _uiState.update { state ->
         result.fold(
           onSuccess = {
+            val driverNote = if (notifiedDriversCount > 0) " وتم إرسال تنبيه لموظفي التوصيل." else " بنجاح."
             state.copy(
               isSubmitting = false,
-              feedbackMessage = "تم تحديث حالة الطلب إلى ($statusLabel) بنجاح.",
+              feedbackMessage = "تم تحديث حالة الطلب إلى ($statusLabel)$driverNote",
             )
           },
           onFailure = { err ->

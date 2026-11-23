@@ -192,6 +192,8 @@ fun CustomerShellScreen(
   onClearWishlistMessage: () -> Unit = {},
   onOpenBrandShowcase: (String) -> Unit = {},
   onLogZeroResultSearch: (String) -> Unit = {},
+  openCategoryTrigger: Int = 0,
+  openCategoryTargetId: String? = null,
 ) {
   var selectedTab by rememberSaveable { mutableStateOf(CustomerTab.HOME) }
   var selectedMainCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -242,6 +244,13 @@ fun CustomerShellScreen(
     if (openOffersTrigger > 0) {
       onOpenSearchPreset(CatalogSortOption.NEWEST, true)
       selectedTab = CustomerTab.SEARCH
+    }
+  }
+
+  LaunchedEffect(openCategoryTrigger, openCategoryTargetId) {
+    if (openCategoryTrigger > 0 && !openCategoryTargetId.isNullOrBlank()) {
+      selectedMainCategoryId = openCategoryTargetId
+      selectedTab = CustomerTab.CATEGORIES
     }
   }
 

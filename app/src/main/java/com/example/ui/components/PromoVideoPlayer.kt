@@ -13,6 +13,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -29,10 +31,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -56,6 +60,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -468,11 +473,15 @@ fun IntroReelVideoOverlay(
   title: String = "",
   storeName: String = "",
   fallbackDurationSeconds: Int,
+  hasInteractiveTarget: Boolean = false,
+  targetHintLabel: String = "",
+  onTapTarget: (() -> Unit)? = null,
   onFinish: () -> Unit,
 ) {
   val context = LocalContext.current
   val isAnimatedImage = mediaType == IntroMediaType.ANIMATED_IMAGE
   val effectiveAnimatedSeconds = fallbackDurationSeconds.takeIf { it > 0 }?.coerceIn(1, 120) ?: 5
+  val interactiveEnabled = hasInteractiveTarget && onTapTarget != null
 
   var finished by remember { mutableStateOf(false) }
   var isPrepared by remember(videoUrl, mediaType) { mutableStateOf(false) }
@@ -488,11 +497,23 @@ fun IntroReelVideoOverlay(
   }
   var animatedScaleMode by remember(videoUrl) { mutableStateOf(ContentScale.Crop) }
 
-  val finishOnce = remember(onFinish) {
+  val latestOnFinish by rememberUpdatedState(onFinish)
+  val latestOnTapTarget by rememberUpdatedState(onTapTarget)
+
+  val finishOnce = remember {
     {
       if (!finished) {
         finished = true
-        onFinish()
+        latestOnFinish()
+      }
+    }
+  }
+
+  val tapTargetOnce = remember {
+    {
+      if (!finished && interactiveEnabled) {
+        finished = true
+        latestOnTapTarget?.invoke()
       }
     }
   }
@@ -601,6 +622,20 @@ fun IntroReelVideoOverlay(
       )
     }
 
+    // Full-screen interactive tap layer (underneath the Skip button) when admin selected a reel target
+    if (interactiveEnabled) {
+      Box(
+        modifier = Modifier
+          .fillMaxSize()
+          .clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClick = { tapTargetOnce() },
+          )
+          .testTag("intro_reel_tap_target_layer"),
+      )
+    }
+
     // Subtle top gradient for legibility of the Skip button only
     Box(
       modifier = Modifier
@@ -641,7 +676,66 @@ fun IntroReelVideoOverlay(
       }
     }
 
-    // Clean top bar: ONLY the prominent "تخطى" (Skip) button (no progress bar, no store name)
+    // Subtle bottom CTA hint pill when the reel links to a Category / Product / Company
+    if (interactiveEnabled) {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .align(Alignment.BottomCenter)
+          .background(
+            Brush.verticalGradient(
+              colors = listOf(
+                Color.Transparent,
+                Color.Black.copy(alpha = 0.65f),
+              ),
+            ),
+          )
+          .navigationBarsPadding()
+          .padding(horizontal = 20.dp, vertical = 18.dp),
+        contentAlignment = Alignment.Center,
+      ) {
+        Surface(
+          onClick = { tapTargetOnce() },
+          shape = RoundedCornerShape(50),
+          color = CharcoalBlack.copy(alpha = 0.84f),
+          border = BorderStroke(1.2.dp, PrimaryYellow.copy(alpha = 0.9f)),
+          modifier = Modifier.testTag("intro_reel_target_cta_pill"),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Filled.TouchApp,
+              contentDescription = null,
+              tint = PrimaryYellow,
+              modifier = Modifier.size(18.dp),
+            )
+            Text(
+              text = if (targetHintLabel.isNotBlank()) {
+                "اضغط على المقطع • $targetHintLabel"
+              } else {
+                "اضغط على المقطع لعرض التفاصيل"
+              },
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold),
+              color = PureWhite,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier.weight(1f, fill = false),
+            )
+            Icon(
+              imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+              contentDescription = null,
+              tint = PrimaryYellow,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        }
+      }
+    }
+
+    // Clean top bar: ONLY the prominent "تخطى" (Skip) button — ALWAYS opens Store Home normally
     Box(
       modifier = Modifier
         .fillMaxWidth()

@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -30,11 +31,16 @@ import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -329,6 +335,7 @@ fun AdminOrdersScreen(
   }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AdminOrderCard(
   order: Order,
@@ -343,61 +350,38 @@ private fun AdminOrderCard(
   val timeline = OrderStatus.activeTimelineStepsFor(order.isStorePickup)
   val currentIdx = timeline.indexOf(order.statusEnum)
   val nextStep = if (currentIdx in 0 until timeline.lastIndex) timeline[currentIdx + 1] else null
+  val dateFmt = remember { java.text.SimpleDateFormat("dd/MM/yyyy • hh:mm a", java.util.Locale("ar", "EG")) }
+  val formattedDate = remember(order.createdAt) {
+    order.createdAt?.toDate()?.let { dateFmt.format(it) }.orEmpty()
+  }
 
   AlEmanCard(modifier = Modifier.fillMaxWidth()) {
     Column(
       modifier = Modifier
         .fillMaxWidth()
         .padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(10.dp),
+      verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+      // 1. الرأس: رقم الطلب + التاريخ على اليمين، وحالة الطلب واضحة بدون تداخل على اليسار
       Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
       ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-          ) {
-            Text(
-              text = order.orderNumber.ifBlank { order.id.take(8) },
-              style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-              color = CharcoalBlack,
-            )
-            BrandPillBadge(
-              text = if (order.accountTypeAtOrder == "wholesale") "جملة" else "قطاعي",
-              containerColor = if (order.accountTypeAtOrder == "wholesale") PrimaryYellow else PrimaryYellowSoft,
-              contentColor = CharcoalBlack,
-            )
-            if (order.isStorePickup) {
-              BrandPillBadge(
-                text = "استلام من المتجر",
-                containerColor = SuccessGreenSoft,
-                contentColor = SuccessGreen,
-              )
-            }
-          }
+        Column(
+          modifier = Modifier.weight(1f),
+          verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
           Text(
-            text = "${order.customerName} • ${order.phone}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextPrimary,
+            text = "#${order.orderNumber.ifBlank { order.id.take(8) }}",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+            color = CharcoalBlack,
           )
-          val locationSummary = if (order.isStorePickup) {
-            "الاستلام المباشر من مقر المتجر"
-          } else {
-            listOfNotNull(
-              order.governorate.takeIf { it.isNotBlank() },
-              order.city.takeIf { it.isNotBlank() },
-              order.deliveryZoneName?.takeIf { it.isNotBlank() },
-            ).joinToString(" - ")
-          }
-          if (locationSummary.isNotBlank()) {
+          if (formattedDate.isNotBlank()) {
             Text(
-              text = locationSummary,
-              style = MaterialTheme.typography.bodySmall,
-              color = if (order.isStorePickup) SuccessGreen else TextSecondary,
+              text = formattedDate,
+              style = MaterialTheme.typography.labelSmall,
+              color = TextSecondary,
             )
           }
         }
@@ -414,192 +398,228 @@ private fun AdminOrderCard(
         }
       }
 
-      if (!order.assignedDriverName.isNullOrBlank()) {
+      // 2. شارات الطلب في FlowRow منسّق يمنع أي تقطيع أو تداخل
+      FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        BrandPillBadge(
+          text = if (order.accountTypeAtOrder == "wholesale") "حساب جملة" else "قطاعي",
+          containerColor = if (order.accountTypeAtOrder == "wholesale") PrimaryYellow else PrimaryYellowSoft,
+          contentColor = CharcoalBlack,
+        )
+        BrandPillBadge(
+          text = if (order.isStorePickup) "استلام من المتجر" else "توصيل للعنوان",
+          containerColor = if (order.isStorePickup) SuccessGreenSoft else GeneralBackground,
+          contentColor = if (order.isStorePickup) SuccessGreen else CharcoalBlack,
+        )
+        BrandPillBadge(
+          text = "${order.paymentMethodEnum.arabicLabel} • ${order.paymentStatusEnum.arabicLabel}",
+          containerColor = if (order.paymentStatus == "verified") SuccessGreenSoft else GeneralBackground,
+          contentColor = if (order.paymentStatus == "verified") SuccessGreen else TextSecondary,
+        )
+      }
+
+      // 3. شارة هاتف التأكيد من «الإيمان كاش» إن وجد
+      val verifiedDevice = order.verifiedByDeviceName?.trim()?.takeIf { it.isNotEmpty() }
+      if (verifiedDevice != null) {
         Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = RoyalBlueSoft,
+          shape = RoundedCornerShape(10.dp),
+          color = SuccessGreenSoft,
+          border = BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.4f)),
           modifier = Modifier.fillMaxWidth(),
         ) {
           Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            Icon(Icons.Filled.LocalShipping, contentDescription = null, tint = RoyalBlue, modifier = Modifier.size(16.dp))
-            Text(
-              text = "المندوب المعيّن: ${order.assignedDriverName}" +
-                (order.assignedDriverPhone?.takeIf { it.isNotBlank() }?.let { " ($it)" } ?: ""),
-              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-              color = RoyalBlue,
+            Icon(
+              imageVector = Icons.Filled.PhoneAndroid,
+              contentDescription = null,
+              tint = SuccessGreen,
+              modifier = Modifier.size(18.dp),
             )
-          }
-        }
-      }
-
-      HorizontalDivider(color = BorderNeutral)
-
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Text(
-          text = "الإجمالي: ${ArabicFormatter.formatCurrency(order.totalAmount)}",
-          style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-          color = CharcoalBlack,
-        )
-        Text(
-          text = "${order.items.size} صنف (${order.totalUnitsCount} وحدة)",
-          style = MaterialTheme.typography.bodySmall,
-          color = TextSecondary,
-        )
-      }
-
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-      ) {
-        Text(
-          text = "الدفع: ${order.paymentMethodEnum.arabicLabel}",
-          style = MaterialTheme.typography.bodySmall,
-          color = TextSecondary,
-        )
-        Text(
-          text = order.paymentStatusEnum.arabicLabel,
-          style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-          color = if (order.paymentStatus == "verified") SuccessGreen else TextSecondary,
-        )
-      }
-
-      if (!order.statusNote.isNullOrBlank()) {
-        Surface(
-          shape = RoundedCornerShape(8.dp),
-          color = PrimaryYellowSoft,
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Text(
-            text = "ملاحظة: ${order.statusNote}",
-            style = MaterialTheme.typography.bodySmall,
-            color = CharcoalBlack,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-          )
-        }
-      }
-
-      // صف 1: توجيه لمندوب + الخريطة (تُخفى تلقائيًا لطلبات الاستلام من المتجر)
-      if (!order.isStorePickup) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          OutlinedButton(
-            onClick = onAssignDriverClick,
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-            modifier = Modifier
-              .weight(1f)
-              .height(44.dp)
-              .testTag("assign_driver_${order.id}"),
-            border = BorderStroke(1.dp, RoyalBlue.copy(alpha = 0.5f)),
-          ) {
-            Icon(Icons.Filled.LocalShipping, contentDescription = null, tint = RoyalBlue, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-              text = if (order.assignedDriverId.isNullOrBlank()) "توجيه لمندوب" else "تغيير المندوب",
-              color = RoyalBlue,
-              fontWeight = FontWeight.Bold,
-              maxLines = 1,
-              softWrap = false,
-              overflow = TextOverflow.Ellipsis,
-            )
-          }
-
-          if (order.hasCoordinates || order.streetAddress.isNotBlank()) {
-            OutlinedButton(
-              onClick = {
-                LocationHelper.openLocationInMaps(
-                  context = context,
-                  latitude = order.latitude,
-                  longitude = order.longitude,
-                  fallbackAddress = "${order.governorate} - ${order.city} - ${order.streetAddress}",
-                  label = "طلب #${order.orderNumber}",
-                )
-              },
-              shape = RoundedCornerShape(10.dp),
-              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-              modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-                .testTag("admin_order_map_${order.id}"),
-              border = BorderStroke(1.dp, CharcoalBlack.copy(alpha = 0.4f)),
-            ) {
-              Icon(Icons.Filled.Map, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
-              Spacer(modifier = Modifier.width(6.dp))
+            Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = "عرض الخريطة",
-                color = CharcoalBlack,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
+                text = "تم التأكيد على هاتف: $verifiedDevice",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = SuccessGreen,
+              )
+              if (!order.verifiedByEmail.isNullOrBlank()) {
+                Text(
+                  text = order.verifiedByEmail,
+                  style = MaterialTheme.typography.labelSmall,
+                  color = TextSecondary,
+                )
+              }
+            }
+            Icon(
+              imageVector = Icons.Filled.Verified,
+              contentDescription = null,
+              tint = SuccessGreen,
+              modifier = Modifier.size(18.dp),
+            )
+          }
+        }
+      }
+
+      // 4. صندوق بيانات العميل والعنوان بشكل منسّق وواضح
+      Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = GeneralBackground,
+        border = BorderStroke(1.dp, BorderNeutral),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            Icon(Icons.Filled.Person, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
+            Text(
+              text = order.customerName.ifBlank { order.recipientName.ifBlank { "عميل" } },
+              style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+              color = CharcoalBlack,
+              modifier = Modifier.weight(1f),
+            )
+          }
+
+          if (order.phone.isNotBlank()) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(Icons.Filled.Phone, contentDescription = null, tint = RoyalBlue, modifier = Modifier.size(16.dp))
+              Text(
+                text = order.phone,
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = TextPrimary,
+              )
+            }
+          }
+
+          val locationSummary = if (order.isStorePickup) {
+            "الاستلام المباشر من مقر المتجر"
+          } else {
+            listOfNotNull(
+              order.governorate.takeIf { it.isNotBlank() },
+              order.city.takeIf { it.isNotBlank() },
+              order.deliveryZoneName?.takeIf { it.isNotBlank() },
+            ).joinToString(" - ")
+          }
+          if (locationSummary.isNotBlank()) {
+            Row(
+              verticalAlignment = Alignment.Top,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Icon(
+                imageVector = if (order.isStorePickup) Icons.Filled.Storefront else Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = if (order.isStorePickup) SuccessGreen else TextSecondary,
+                modifier = Modifier.size(16.dp),
+              )
+              Text(
+                text = locationSummary,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (order.isStorePickup) SuccessGreen else TextSecondary,
+                modifier = Modifier.weight(1f),
               )
             }
           }
         }
       }
 
-      // صف 2: طباعة/مشاركة الإيصال + التفاصيل
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        if (canPrepareAndPrint) {
-          OutlinedButton(
-            onClick = onPrintReceiptClick,
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-            modifier = Modifier
-              .weight(1f)
-              .height(44.dp)
-              .testTag("print_receipt_${order.id}"),
-            border = BorderStroke(1.dp, CharcoalBlack),
+      if (!order.assignedDriverName.isNullOrBlank()) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = RoyalBlueSoft,
+          border = BorderStroke(1.dp, RoyalBlue.copy(alpha = 0.25f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
-            Icon(Icons.Filled.Print, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
+            Icon(Icons.Filled.LocalShipping, contentDescription = null, tint = RoyalBlue, modifier = Modifier.size(16.dp))
             Text(
-              text = "طباعة الإيصال",
-              color = CharcoalBlack,
-              fontWeight = FontWeight.Bold,
-              maxLines = 1,
-              softWrap = false,
-              overflow = TextOverflow.Ellipsis,
+              text = "المندوب المعيّن: ${order.assignedDriverName}" +
+                (order.assignedDriverPhone?.takeIf { it.isNotBlank() }?.let { " • $it" } ?: ""),
+              style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+              color = RoyalBlue,
+              modifier = Modifier.weight(1f),
             )
           }
         }
+      }
 
-        OutlinedButton(
-          onClick = onViewDetailsClick,
-          shape = RoundedCornerShape(10.dp),
-          contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+      // 5. ملخص القيمة والأصناف
+      Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = PureWhite,
+        border = BorderStroke(1.dp, BorderNeutral),
+        modifier = Modifier.fillMaxWidth(),
+      ) {
+        Row(
           modifier = Modifier
-            .weight(1f)
-            .height(44.dp)
-            .testTag("order_details_${order.id}"),
-          border = BorderStroke(1.dp, BorderNeutral),
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically,
         ) {
-          Icon(Icons.Filled.Info, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
-          Spacer(modifier = Modifier.width(6.dp))
+          Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "إجمالي الطلب",
+              style = MaterialTheme.typography.labelSmall,
+              color = TextSecondary,
+            )
+            Text(
+              text = ArabicFormatter.formatCurrency(order.totalAmount),
+              style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+              color = CharcoalBlack,
+            )
+          }
+          Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+              text = "${order.items.size} صنف",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+              color = CharcoalBlack,
+            )
+            Text(
+              text = "${order.totalUnitsCount} وحدة",
+              style = MaterialTheme.typography.labelSmall,
+              color = TextSecondary,
+            )
+          }
+        }
+      }
+
+      if (!order.statusNote.isNullOrBlank()) {
+        Surface(
+          shape = RoundedCornerShape(10.dp),
+          color = PrimaryYellowSoft,
+          border = BorderStroke(1.dp, PrimaryYellow.copy(alpha = 0.6f)),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
           Text(
-            text = "التفاصيل",
+            text = "ملاحظة: ${order.statusNote}",
+            style = MaterialTheme.typography.bodySmall,
             color = CharcoalBlack,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
           )
         }
       }
 
-      // صف 3: زر ترقية الحالة + زر تغيير الحالة المرن بسطر كامل بدون أي تقطيع للكلمات
+      HorizontalDivider(color = BorderNeutral)
+
+      // 6. أزرار الإجراءات المتناسقة (بدون ارتفاع ثابت يقصّ الحروف العربية)
       Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -607,11 +627,11 @@ private fun AdminOrderCard(
         if (nextStep != null) {
           Button(
             onClick = { onQuickNextStatus(nextStep) },
-            shape = RoundedCornerShape(10.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             modifier = Modifier
               .fillMaxWidth()
-              .height(46.dp)
+              .heightIn(min = 48.dp)
               .testTag("quick_next_status_${order.id}"),
             colors = ButtonDefaults.buttonColors(
               containerColor = PrimaryYellow,
@@ -619,37 +639,134 @@ private fun AdminOrderCard(
             ),
           ) {
             Text(
-              text = "نقل إلى: ${nextStep.labelFor(order.isStorePickup)}",
-              fontWeight = FontWeight.Bold,
-              maxLines = 1,
-              softWrap = false,
-              overflow = TextOverflow.Ellipsis,
+              text = "نقل الطلب إلى: ${nextStep.labelFor(order.isStorePickup)}",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold),
             )
           }
         }
 
-        Button(
-          onClick = onUpdateStatusClick,
-          shape = RoundedCornerShape(10.dp),
-          contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .testTag("update_status_${order.id}"),
-          colors = ButtonDefaults.buttonColors(
-            containerColor = CharcoalBlack,
-            contentColor = PureWhite,
-          ),
+        // صف التفاصيل + تغيير الحالة
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-          Icon(Icons.Filled.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
-          Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "اختيار حالة أخرى",
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-          )
+          OutlinedButton(
+            onClick = onViewDetailsClick,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier
+              .weight(1f)
+              .heightIn(min = 48.dp)
+              .testTag("order_details_${order.id}"),
+            border = BorderStroke(1.dp, BorderNeutral),
+          ) {
+            Icon(Icons.Filled.Info, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "التفاصيل",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+              color = CharcoalBlack,
+            )
+          }
+
+          Button(
+            onClick = onUpdateStatusClick,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+            modifier = Modifier
+              .weight(1f)
+              .heightIn(min = 48.dp)
+              .testTag("update_status_${order.id}"),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = CharcoalBlack,
+              contentColor = PureWhite,
+            ),
+          ) {
+            Icon(Icons.Filled.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "تغيير الحالة",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            )
+          }
+        }
+
+        // صف المندوب + الخريطة (لطلبات التوصيل)
+        if (!order.isStorePickup) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            OutlinedButton(
+              onClick = onAssignDriverClick,
+              shape = RoundedCornerShape(12.dp),
+              contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+              modifier = Modifier
+                .weight(1f)
+                .heightIn(min = 48.dp)
+                .testTag("assign_driver_${order.id}"),
+              border = BorderStroke(1.dp, RoyalBlue.copy(alpha = 0.55f)),
+            ) {
+              Icon(Icons.Filled.LocalShipping, contentDescription = null, tint = RoyalBlue, modifier = Modifier.size(16.dp))
+              Spacer(modifier = Modifier.width(6.dp))
+              Text(
+                text = if (order.assignedDriverId.isNullOrBlank()) "تعيين مندوب" else "تغيير المندوب",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = RoyalBlue,
+              )
+            }
+
+            if (order.hasCoordinates || order.streetAddress.isNotBlank()) {
+              OutlinedButton(
+                onClick = {
+                  LocationHelper.openLocationInMaps(
+                    context = context,
+                    latitude = order.latitude,
+                    longitude = order.longitude,
+                    fallbackAddress = "${order.governorate} - ${order.city} - ${order.streetAddress}",
+                    label = "طلب #${order.orderNumber}",
+                  )
+                },
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                modifier = Modifier
+                  .weight(1f)
+                  .heightIn(min = 48.dp)
+                  .testTag("admin_order_map_${order.id}"),
+                border = BorderStroke(1.dp, CharcoalBlack.copy(alpha = 0.45f)),
+              ) {
+                Icon(Icons.Filled.Map, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                  text = "الخريطة",
+                  style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                  color = CharcoalBlack,
+                )
+              }
+            }
+          }
+        }
+
+        // زر طباعة الإيصال بعرض كامل واضح
+        if (canPrepareAndPrint) {
+          OutlinedButton(
+            onClick = onPrintReceiptClick,
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(min = 46.dp)
+              .testTag("print_receipt_${order.id}"),
+            border = BorderStroke(1.dp, CharcoalBlack),
+          ) {
+            Icon(Icons.Filled.Print, contentDescription = null, tint = CharcoalBlack, modifier = Modifier.size(17.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = "طباعة ومشاركة الإيصال",
+              style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+              color = CharcoalBlack,
+            )
+          }
         }
       }
     }
@@ -743,6 +860,29 @@ private fun OrderDetailsAdminDialog(
             style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
             color = CharcoalBlack,
           )
+        }
+        if (!order.verifiedByDeviceName.isNullOrBlank()) {
+          Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = SuccessGreenSoft,
+            border = BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.4f)),
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+              Text(
+                text = "تم التأكيد على هاتف: ${order.verifiedByDeviceName}",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = SuccessGreen,
+              )
+              if (!order.verifiedByEmail.isNullOrBlank()) {
+                Text(
+                  text = "الحساب: ${order.verifiedByEmail}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = TextSecondary,
+                )
+              }
+            }
+          }
         }
 
         HorizontalDivider(color = BorderNeutral)

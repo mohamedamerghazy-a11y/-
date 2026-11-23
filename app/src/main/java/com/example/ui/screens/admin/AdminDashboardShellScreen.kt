@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Badge
@@ -76,6 +77,7 @@ import com.example.ui.theme.PrimaryYellow
 import com.example.ui.theme.PrimaryYellowSoft
 import com.example.ui.theme.PureWhite
 import com.example.ui.theme.SuccessGreen
+import com.example.ui.theme.SuccessGreenSoft
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.AdminDashboardUiState
@@ -137,6 +139,8 @@ fun AdminDashboardShellScreen(
   onBackClick: () -> Unit,
   onSelectSection: (StaffPermission) -> Unit,
   onOpenBrandShowcases: () -> Unit = {},
+  canViewCashTracking: Boolean = false,
+  onOpenCashTracking: () -> Unit = {},
 ) {
   val visibleGroups = adminGroups.mapNotNull { group ->
     val filtered = group.items.filter { it in allowedPermissions }
@@ -222,6 +226,53 @@ fun AdminDashboardShellScreen(
               allowedPermissions = allowedPermissions,
               onSelectSection = onSelectSection,
             )
+          }
+        }
+
+        if (canViewCashTracking) {
+          item {
+            AlEmanCard(modifier = Modifier.fillMaxWidth()) {
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable(onClick = onOpenCashTracking)
+                  .testTag("admin_tile_cash_tracking")
+                  .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+              ) {
+                Box(
+                  modifier = Modifier
+                    .size(40.dp)
+                    .background(SuccessGreenSoft, RoundedCornerShape(10.dp)),
+                  contentAlignment = Alignment.Center,
+                ) {
+                  Icon(
+                    imageVector = Icons.Filled.AccountBalanceWallet,
+                    contentDescription = "متابعة تحويلات الكاش",
+                    tint = SuccessGreen,
+                    modifier = Modifier.size(20.dp),
+                  )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                  Text(
+                    text = "متابعة تحويلات الكاش",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = TextPrimary,
+                  )
+                  Text(
+                    text = "إيميلات الإيمان كاش، أرصدة كل هاتف، تصفية بالتاريخ، السحب وتصدير إكسيل",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary,
+                  )
+                }
+                Icon(
+                  imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                  contentDescription = null,
+                  tint = TextSecondary,
+                )
+              }
+            }
           }
         }
 

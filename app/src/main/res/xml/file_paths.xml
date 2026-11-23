@@ -9,4 +9,7 @@
     <cache-path
         name="invoices"
         path="invoices/" />
+    <cache-path
+        name="exports"
+        path="exports/" />
 </paths>

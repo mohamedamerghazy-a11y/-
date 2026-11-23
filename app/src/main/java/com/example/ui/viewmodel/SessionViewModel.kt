@@ -73,6 +73,26 @@ data class SessionUiState(
     get() = effectivePermissions.contains(StaffPermission.PREVIEW_WHOLESALE_STORE) ||
       effectivePermissions.contains(StaffPermission.MANAGE_PRODUCTS)
 
+  /**
+   * تصفير حساب هاتف كاش ("تم السحب") مسموح فقط لمالك الحساب أو المحاسب (المسؤول عن الحسابات).
+   */
+  val canSettleCashDevice: Boolean
+    get() {
+      if (isConfiguredOwner) return true
+      val staff = staffMember
+      if (staff != null && staff.isActive) {
+        return staff.staffRoleEnum == StaffRole.OWNER || staff.staffRoleEnum == StaffRole.ACCOUNTANT
+      }
+      val profile = (profileState as? ProfileLoadState.Loaded)?.profile ?: return false
+      return profile.staffRoleEnum == StaffRole.OWNER || profile.staffRoleEnum == StaffRole.ACCOUNTANT
+    }
+
+  val canViewCashTracking: Boolean
+    get() = canSettleCashDevice ||
+      effectivePermissions.contains(StaffPermission.MANAGE_PAYMENTS) ||
+      effectivePermissions.contains(StaffPermission.MANAGE_STORE_SETTINGS) ||
+      effectivePermissions.contains(StaffPermission.VIEW_REPORTS)
+
   val effectiveWholesaleView: Boolean
     get() {
       val profile = (profileState as? ProfileLoadState.Loaded)?.profile

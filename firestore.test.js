@@ -1580,11 +1580,11 @@ test("Wishlist & Cart Variants & Cash Verification Logs: owner/staff isolation w
     email_verified: true,
   }).firestore();
 
-  // Accountant with only manage_payments cannot jump orderStatus simultaneously
+  // Accountant with only manage_payments cannot jump orderStatus to delivered/out_for_delivery
   await assertFails(
     payOnlyDb.collection("orders").doc("order_cash_1").update({
       paymentStatus: "verified",
-      orderStatus: "preparing",
+      orderStatus: "delivered",
       statusNote: "مراجعة فقط",
       updatedAt: ts,
     })
@@ -2124,7 +2124,510 @@ test("Companies Registry, Product Company Link & Optional-Banner Discounted Show
   await assertSucceeds(guestDb.collection("brandShowcases").doc("showcase_henkel").get());
 });
 
+test("Al-Eman Cash extra emails & device attribution: authorized email verifies order, denied store settings", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER_UID, {
+    email: OWNER_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@example.com",
+    email_verified: true,
+  }).firestore();
+  const cashEmail = "cash.phone1@gmail.com";
+  const cashDocId = "cash_phone1_gmail_com";
+  const cashVerifierDb = testEnv.authenticatedContext("cash_user_1", {
+    email: cashEmail,
+    email_verified: true,
+  }).firestore();
 
+  const ts = pastDate();
 
+  await assertSucceeds(
+    ownerDb.collection("cashVerifierAccounts").doc(cashDocId).set({
+      email: cashEmail,
+      deviceName: "هاتف فودافون كاش ١",
+      phoneNumber: "01012345678",
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
 
+  await assertFails(aliceDb.collection("cashVerifierAccounts").doc(cashDocId).get());
+  await assertSucceeds(cashVerifierDb.collection("cashVerifierAccounts").doc(cashDocId).get());
 
+  await assertSucceeds(
+    aliceDb.collection("orders").doc("ord_cash_1").set({
+      userId: ALICE_UID,
+      orderNumber: "ET-1055",
+      customerName: "أحمد محمد",
+      customerEmail: "alice@example.com",
+      accountTypeAtOrder: "retail",
+      items: [{ productId: "p1", productName: "منتج", sku: "S1", unit: "قطعة", pricingMode: "retail", unitPrice: 250, quantity: 1, lineTotal: 250 }],
+      subtotal: 250,
+      discountAmount: 0,
+      deliveryFee: 0,
+      totalAmount: 250,
+      paymentMethod: "vodafone_cash",
+      paymentStatus: "pending_review",
+      senderPhone: "01099887766",
+      orderStatus: "new_order",
+      deliveryLabel: "المنزل",
+      recipientName: "أحمد محمد",
+      phone: "01099887766",
+      governorate: "القاهرة",
+      city: "مدينة نصر",
+      streetAddress: "شارع عباس العقاد ١٠",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(cashVerifierDb.collection("orders").where("paymentStatus", "==", "pending_review").get());
+  await assertSucceeds(
+    cashVerifierDb.collection("orders").doc("ord_cash_1").update({
+      paymentStatus: "verified",
+      orderStatus: "preparing",
+      statusNote: "تم التأكيد على هاتف: هاتف فودافون كاش ١",
+      verifiedByDeviceName: "هاتف فودافون كاش ١",
+      verifiedByEmail: cashEmail,
+      verifiedAt: pastDate(),
+      updatedAt: pastDate(),
+    })
+  );
+
+  await assertSucceeds(
+    cashVerifierDb.collection("users").doc(ALICE_UID).collection("notifications").doc("notif_cash_1").set({
+      userId: ALICE_UID,
+      title: "تم تأكيد الدفع لطلبك #ET-1055",
+      message: "تم التحقق من التحويل بنجاح",
+      type: "payment_status",
+      referenceId: "ord_cash_1",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+  await assertSucceeds(
+    cashVerifierDb.collection("cashVerificationLogs").doc("log_cash_1").set({
+      providerName: "فودافون كاش",
+      senderAddress: "VF-Cash",
+      senderPhone: "01099887766",
+      amount: 250,
+      transactionId: "TX-123456",
+      matchedOrderId: "ord_cash_1",
+      matchedOrderNumber: "ET-1055",
+      verifiedByDeviceName: "هاتف فودافون كاش ١",
+      verifiedByEmail: cashEmail,
+      isSettled: false,
+      status: "verified",
+      reason: "تم التأكيد على هاتف: هاتف فودافون كاش ١",
+      createdAt: pastDate(),
+    })
+  );
+
+  await assertFails(
+    cashVerifierDb.collection("settings").doc("store").set({ storeName: "Hacked" })
+  );
+  await assertFails(
+    cashVerifierDb.collection("orders").doc("ord_cash_1").update({
+      orderStatus: "delivered",
+      updatedAt: pastDate(),
+    })
+  );
+  await assertFails(
+    cashVerifierDb.collection("cashWithdrawals").doc("w_unauth").set({
+      deviceKey: cashDocId,
+      deviceName: "هاتف فودافون كاش ١",
+      deviceEmail: cashEmail,
+      withdrawnAmount: 250,
+      operationsCount: 1,
+      withdrawnByUid: "cash_user_1",
+      withdrawnByName: "Cash",
+      createdAt: pastDate(),
+    })
+  );
+});
+
+test("Cash withdrawal settlement ('تم السحب'): allowed ONLY for Owner and Accountant, denied for Manager", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER_UID, {
+    email: OWNER_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const accountantUid = "acc_uid_1";
+  const managerUid = "mgr_uid_1";
+  const accountantDb = testEnv.authenticatedContext(accountantUid, {
+    email: "accountant@example.com",
+    email_verified: true,
+  }).firestore();
+  const managerDb = testEnv.authenticatedContext(managerUid, {
+    email: "manager@example.com",
+    email_verified: true,
+  }).firestore();
+
+  const ts = pastDate();
+
+  await assertSucceeds(
+    ownerDb.collection("staff").doc(accountantUid).set({
+      uid: accountantUid,
+      fullName: "محمود المحاسب",
+      email: "accountant@example.com",
+      role: "accountant",
+      permissions: ["manage_payments", "view_reports"],
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+  await assertSucceeds(
+    ownerDb.collection("staff").doc(managerUid).set({
+      uid: managerUid,
+      fullName: "طارق المدير",
+      email: "manager@example.com",
+      role: "manager",
+      permissions: ["manage_payments", "manage_orders", "manage_store_settings"],
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    ownerDb.collection("cashVerificationLogs").doc("log_settle_1").set({
+      providerName: "فودافون كاش",
+      senderAddress: "VF-Cash",
+      amount: 500,
+      verifiedByDeviceName: "هاتف الفرع الرئيسي",
+      verifiedByEmail: "branch1@gmail.com",
+      isSettled: false,
+      status: "verified",
+      createdAt: ts,
+    })
+  );
+
+  await assertFails(
+    managerDb.collection("cashWithdrawals").doc("w_mgr").set({
+      deviceKey: "branch1_gmail_com",
+      deviceName: "هاتف الفرع الرئيسي",
+      deviceEmail: "branch1@gmail.com",
+      withdrawnAmount: 500,
+      operationsCount: 1,
+      withdrawnByUid: managerUid,
+      withdrawnByName: "طارق المدير",
+      createdAt: pastDate(),
+    })
+  );
+  await assertFails(
+    managerDb.collection("cashVerificationLogs").doc("log_settle_1").update({
+      isSettled: true,
+      withdrawalId: "w_mgr",
+      settledAt: pastDate(),
+    })
+  );
+
+  await assertSucceeds(
+    accountantDb.collection("cashWithdrawals").doc("w_acc_1").set({
+      deviceKey: "branch1_gmail_com",
+      deviceName: "هاتف الفرع الرئيسي",
+      deviceEmail: "branch1@gmail.com",
+      withdrawnAmount: 500,
+      operationsCount: 1,
+      withdrawnByUid: accountantUid,
+      withdrawnByName: "محمود المحاسب",
+      withdrawnByEmail: "accountant@example.com",
+      note: "تم التسليم للخزينة",
+      createdAt: pastDate(),
+    })
+  );
+  await assertSucceeds(
+    accountantDb.collection("cashVerificationLogs").doc("log_settle_1").update({
+      isSettled: true,
+      withdrawalId: "w_acc_1",
+      settledAt: pastDate(),
+    })
+  );
+
+  await assertSucceeds(
+    ownerDb.collection("cashWithdrawals").doc("w_owner_1").set({
+      deviceKey: "branch1_gmail_com",
+      deviceName: "هاتف الفرع الرئيسي",
+      withdrawnAmount: 100,
+      operationsCount: 1,
+      withdrawnByUid: OWNER_UID,
+      withdrawnByName: "مالك المتجر",
+      createdAt: pastDate(),
+    })
+  );
+});
+
+test("Order-preparation & delivery notifications: cash verifier, accountant, and order manager can look up staff/owner and send order_status alerts; customers remain blocked", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER_UID, {
+    email: OWNER_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const orderMgrUid = "order_mgr_notif_1";
+  const accountantUid = "acc_notif_1";
+  const driverUid = "driver_notif_1";
+  const cashDeviceUid = "cash_dev_notif_1";
+  const cashEmail = "cash.device2@gmail.com";
+  const cashKey = "cash_device2_gmail_com";
+
+  const ts = pastDate();
+
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("users").doc(OWNER_UID).set({
+      uid: OWNER_UID,
+      fullName: "مالك المتجر",
+      email: OWNER_EMAIL,
+      accountType: "retail",
+      wholesaleStatus: "none",
+      role: "owner",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+    await ctx.firestore().collection("users").doc(ALICE_UID).set({
+      uid: ALICE_UID,
+      fullName: "عميل عادي",
+      email: "alice@example.com",
+      accountType: "retail",
+      wholesaleStatus: "none",
+      role: "customer",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  });
+
+  await assertSucceeds(
+    ownerDb.collection("staff").doc(orderMgrUid).set({
+      uid: orderMgrUid,
+      fullName: "مسؤول التجهيز",
+      email: "orders@example.com",
+      role: "order_manager",
+      permissions: ["manage_orders", "manage_delivery"],
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+  await assertSucceeds(
+    ownerDb.collection("staff").doc(accountantUid).set({
+      uid: accountantUid,
+      fullName: "محاسب المتجر",
+      email: "acc@example.com",
+      role: "accountant",
+      permissions: ["manage_payments", "view_reports"],
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+  await assertSucceeds(
+    ownerDb.collection("staff").doc(driverUid).set({
+      uid: driverUid,
+      fullName: "مندوب التوصيل",
+      email: "driver@example.com",
+      role: "delivery_driver",
+      permissions: ["deliver_orders"],
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+  await assertSucceeds(
+    ownerDb.collection("cashVerifierAccounts").doc(cashKey).set({
+      email: cashEmail,
+      deviceName: "هاتف كاش 2",
+      isActive: true,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  const cashDb = testEnv.authenticatedContext(cashDeviceUid, {
+    email: cashEmail,
+    email_verified: true,
+  }).firestore();
+  const accountantDb = testEnv.authenticatedContext(accountantUid, {
+    email: "acc@example.com",
+    email_verified: true,
+  }).firestore();
+  const orderMgrDb = testEnv.authenticatedContext(orderMgrUid, {
+    email: "orders@example.com",
+    email_verified: true,
+  }).firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@example.com",
+    email_verified: true,
+  }).firestore();
+
+  // Cash verifier can read staff directory & query owner user, NOT all customers
+  await assertSucceeds(cashDb.collection("staff").get());
+  await assertSucceeds(cashDb.collection("users").where("role", "==", "owner").get());
+  await assertFails(cashDb.collection("users").get());
+
+  // Cash verifier can send order_status alert to order manager & owner, NOT offer_promo
+  await assertSucceeds(
+    cashDb.collection("users").doc(orderMgrUid).collection("notifications").doc("n_cash_1").set({
+      userId: orderMgrUid,
+      title: "طلب جديد جاهز للتجهيز #ET-1050",
+      message: "تم تأكيد الدفع آلياً على هاتف كاش 2 — يرجى البدء في التجهيز.",
+      type: "order_status",
+      referenceId: "ord_1050",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+  await assertFails(
+    cashDb.collection("users").doc(orderMgrUid).collection("notifications").doc("n_cash_bad").set({
+      userId: orderMgrUid,
+      title: "عرض ترويجي",
+      message: "غير مسموح لجهاز الكاش",
+      type: "offer_promo",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+
+  // Accountant confirming payment manually can verify payment + move to preparing, look up staff/owner, and notify order manager
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection("orders").doc("ord_1051").set({
+      userId: ALICE_UID,
+      orderNumber: "ET-1051",
+      customerName: "عميل عادي",
+      customerEmail: "alice@example.com",
+      accountTypeAtOrder: "retail",
+      items: [{ productId: "p1", productName: "منتج", quantity: 1, unitPrice: 200 }],
+      subtotal: 200,
+      discountAmount: 0,
+      deliveryFee: 20,
+      totalAmount: 220,
+      paymentMethod: "vodafone_cash",
+      paymentStatus: "pending_review",
+      orderStatus: "new_order",
+      deliveryLabel: "المنزل",
+      recipientName: "عميل عادي",
+      phone: "01001234567",
+      governorate: "القاهرة",
+      city: "مدينة نصر",
+      streetAddress: "10 شارع الطيران",
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  });
+  await assertSucceeds(
+    accountantDb.collection("orders").doc("ord_1051").update({
+      paymentStatus: "verified",
+      orderStatus: "preparing",
+      statusNote: "تم تأكيد استلام التحويل",
+      updatedAt: pastDate(),
+    })
+  );
+  await assertSucceeds(accountantDb.collection("staff").get());
+  await assertSucceeds(accountantDb.collection("users").where("role", "==", "owner").get());
+  await assertSucceeds(
+    accountantDb.collection("users").doc(orderMgrUid).collection("notifications").doc("n_acc_1").set({
+      userId: orderMgrUid,
+      title: "طلب جديد جاهز للتجهيز #ET-1051",
+      message: "تم تأكيد الدفع يدوياً من إدارة المدفوعات.",
+      type: "order_status",
+      referenceId: "ord_1051",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+
+  // Order manager can list staff (including drivers) and notify delivery driver
+  await assertSucceeds(orderMgrDb.collection("staff").get());
+  await assertSucceeds(
+    orderMgrDb.collection("users").doc(driverUid).collection("notifications").doc("n_drv_1").set({
+      userId: driverUid,
+      title: "طلب جاهز للتوصيل #ET-1051",
+      message: "تم تجهيز الطلب وجاهز للتوصيل.",
+      type: "order_status",
+      referenceId: "ord_1051",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+
+  // Regular customer remains blocked from listing staff, querying owner, or notifying staff
+  await assertFails(aliceDb.collection("staff").get());
+  await assertFails(aliceDb.collection("users").where("role", "==", "owner").get());
+  await assertFails(
+    aliceDb.collection("users").doc(orderMgrUid).collection("notifications").doc("n_alice_bad").set({
+      userId: orderMgrUid,
+      title: "تنبيه مزيف",
+      message: "غير مسموح للعميل",
+      type: "order_status",
+      isRead: false,
+      createdAt: pastDate(),
+    })
+  );
+});
+
+test("Store Settings Intro Reel Target: owner can configure promo_only/category/product/company and invalid values are rejected", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER_UID, {
+    email: OWNER_EMAIL,
+    email_verified: true,
+  }).firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@example.com",
+    email_verified: true,
+  }).firestore();
+
+  await assertSucceeds(
+    ownerDb.collection("settings").doc("store").set({
+      introVideoEnabled: true,
+      introMediaType: "video",
+      introVideoUrl: "https://res.cloudinary.com/demo/video/upload/intro.mp4",
+      introReelTargetType: "company",
+      introReelTargetId: "company:comp_1",
+      introReelTargetLabel: "شركة الإيمان",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+
+  await assertSucceeds(
+    ownerDb.collection("settings").doc("store").set({
+      introReelTargetType: "promo_only",
+      introReelTargetId: "",
+      introReelTargetLabel: "",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+
+  await assertSucceeds(
+    ownerDb.collection("settings").doc("store").set({
+      introReelTargetType: "category",
+      introReelTargetId: "cat_electronics",
+      introReelTargetLabel: "الإلكترونيات",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+
+  await assertSucceeds(
+    ownerDb.collection("settings").doc("store").set({
+      introReelTargetType: "product",
+      introReelTargetId: "prod_123",
+      introReelTargetLabel: "خلاط تورنيدو",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+
+  // Invalid target type must fail
+  await assertFails(
+    ownerDb.collection("settings").doc("store").set({
+      introReelTargetType: "external_url",
+      introReelTargetId: "https://evil.example.com",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+
+  // Regular customer cannot modify store settings
+  await assertFails(
+    aliceDb.collection("settings").doc("store").set({
+      introReelTargetType: "product",
+      introReelTargetId: "prod_123",
+      updatedAt: pastDate(),
+    }, { merge: true })
+  );
+});

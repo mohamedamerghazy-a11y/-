@@ -51,6 +51,7 @@ import com.example.core.util.AppIconManager
 import com.example.core.util.ArabicFormatter
 import com.example.data.media.VideoDiskCache
 import com.example.data.model.IntroMediaType
+import com.example.data.model.IntroReelTargetType
 import com.example.data.model.NotificationType
 import com.example.data.model.StorePolicyTab
 import com.example.data.model.UserProfile
@@ -98,6 +99,7 @@ import com.example.ui.theme.RoyalBlue
 import com.example.ui.theme.TextSecondary
 import com.example.ui.viewmodel.AdminBannersViewModel
 import com.example.ui.viewmodel.AdminBrandShowcasesViewModel
+import com.example.ui.viewmodel.AdminCashTrackingViewModel
 import com.example.ui.viewmodel.AdminCatalogViewModel
 import com.example.ui.viewmodel.AdminCouponsViewModel
 import com.example.ui.viewmodel.AdminDashboardViewModel
@@ -122,6 +124,11 @@ import com.example.ui.viewmodel.SessionViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 
+private data class IntroReelPendingTarget(
+  val targetType: IntroReelTargetType,
+  val targetId: String,
+)
+
 @Composable
 fun AppNavHost(
   pendingNotificationDeepLink: NotificationDeepLink? = null,
@@ -131,6 +138,7 @@ fun AppNavHost(
   var showSplash by rememberSaveable { mutableStateOf(true) }
   var introVideoDismissed by rememberSaveable { mutableStateOf(false) }
   var introWindowExpired by rememberSaveable { mutableStateOf(false) }
+  var pendingIntroReelTarget by remember { mutableStateOf<IntroReelPendingTarget?>(null) }
 
   val context = LocalContext.current
   val catalogViewModel: CatalogViewModel = viewModel(
@@ -205,12 +213,53 @@ fun AppNavHost(
     rootCatalogState.storeSettings.hasActiveIntroVideo
 
   if (shouldShowIntroVideo) {
+    val reelSettings = rootCatalogState.storeSettings
+    val hasTarget = reelSettings.hasInteractiveIntroReelTarget
+    val resolvedTargetHint = remember(
+      reelSettings.introReelTargetType,
+      reelSettings.introReelTargetId,
+      reelSettings.introReelTargetLabel,
+      rootCatalogState.categories,
+      rootCatalogState.products,
+      rootCatalogState.brandShowcases,
+      rootCatalogState.companies,
+    ) {
+      if (!hasTarget) {
+        ""
+      } else {
+        val targetId = reelSettings.introReelTargetId.trim()
+        val liveName = when (reelSettings.introReelTargetTypeEnum) {
+          IntroReelTargetType.CATEGORY -> rootCatalogState.categories.firstOrNull { it.id == targetId }?.name
+          IntroReelTargetType.PRODUCT -> rootCatalogState.products.firstOrNull { it.id == targetId }?.name
+          IntroReelTargetType.COMPANY -> rootCatalogState.resolveBrandShowcase(targetId)?.title
+          IntroReelTargetType.PROMO_ONLY -> null
+        }
+        liveName?.takeIf { it.isNotBlank() }
+          ?: reelSettings.introReelTargetLabel.trim().ifBlank { reelSettings.introReelTargetTypeEnum.arabicLabel }
+      }
+    }
+
     IntroReelVideoOverlay(
-      videoUrl = rootCatalogState.storeSettings.effectiveIntroMediaUrl,
-      mediaType = rootCatalogState.storeSettings.introMediaTypeEnum,
-      isVideoMuted = rootCatalogState.storeSettings.introVideoMuted,
-      fallbackDurationSeconds = rootCatalogState.storeSettings.safeIntroVideoDurationSeconds,
+      videoUrl = reelSettings.effectiveIntroMediaUrl,
+      mediaType = reelSettings.introMediaTypeEnum,
+      isVideoMuted = reelSettings.introVideoMuted,
+      fallbackDurationSeconds = reelSettings.safeIntroVideoDurationSeconds,
+      hasInteractiveTarget = hasTarget,
+      targetHintLabel = resolvedTargetHint,
+      onTapTarget = if (hasTarget) {
+        {
+          pendingIntroReelTarget = IntroReelPendingTarget(
+            targetType = reelSettings.introReelTargetTypeEnum,
+            targetId = reelSettings.introReelTargetId.trim(),
+          )
+          introVideoDismissed = true
+          introWindowExpired = true
+        }
+      } else {
+        null
+      },
       onFinish = {
+        pendingIntroReelTarget = null
         introVideoDismissed = true
         introWindowExpired = true
       },
@@ -250,6 +299,8 @@ fun AppNavHost(
       GuestNavGraph(
         catalogViewModel = catalogViewModel,
         cartOrderViewModel = cartOrderViewModel,
+        pendingIntroReelTarget = pendingIntroReelTarget,
+        onConsumeIntroReelTarget = { pendingIntroReelTarget = null },
       )
     } else {
       key(user.uid) {
@@ -264,6 +315,8 @@ fun AppNavHost(
           cartOrderViewModel = cartOrderViewModel,
           pendingNotificationDeepLink = pendingNotificationDeepLink,
           onConsumeNotificationDeepLink = onConsumeNotificationDeepLink,
+          pendingIntroReelTarget = pendingIntroReelTarget,
+          onConsumeIntroReelTarget = { pendingIntroReelTarget = null },
           onOpenAlemanCashPreview = onOpenAlemanCashPreview,
         )
       }
@@ -275,11 +328,39 @@ fun AppNavHost(
 private fun GuestNavGraph(
   catalogViewModel: CatalogViewModel,
   cartOrderViewModel: CartOrderViewModel,
+  pendingIntroReelTarget: IntroReelPendingTarget? = null,
+  onConsumeIntroReelTarget: () -> Unit = {},
 ) {
   val context = LocalContext.current
   val navController = rememberNavController()
   val catalogState by catalogViewModel.uiState.collectAsStateWithLifecycle()
   val cartUiState by cartOrderViewModel.uiState.collectAsStateWithLifecycle()
+  var openCategoryTrigger by rememberSaveable { mutableIntStateOf(0) }
+  var openCategoryTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+
+  LaunchedEffect(pendingIntroReelTarget) {
+    val target = pendingIntroReelTarget ?: return@LaunchedEffect
+    when (target.targetType) {
+      IntroReelTargetType.CATEGORY -> {
+        if (target.targetId.isNotBlank()) {
+          openCategoryTargetId = target.targetId
+          openCategoryTrigger++
+        }
+      }
+      IntroReelTargetType.PRODUCT -> {
+        if (target.targetId.isNotBlank()) {
+          navController.navigate(AppRoute.ProductDetails(target.targetId))
+        }
+      }
+      IntroReelTargetType.COMPANY -> {
+        if (target.targetId.isNotBlank()) {
+          navController.navigate(AppRoute.BrandShowcase(target.targetId))
+        }
+      }
+      IntroReelTargetType.PROMO_ONLY -> Unit
+    }
+    onConsumeIntroReelTarget()
+  }
 
   NavHost(
     navController = navController,
@@ -349,6 +430,8 @@ private fun GuestNavGraph(
           navController.navigate(AppRoute.BrandShowcase(showcaseId))
         },
         onLogZeroResultSearch = { catalogViewModel.logZeroResultSearch(it) },
+        openCategoryTrigger = openCategoryTrigger,
+        openCategoryTargetId = openCategoryTargetId,
       )
     }
 
@@ -470,6 +553,8 @@ private fun AuthenticatedAppRoot(
   cartOrderViewModel: CartOrderViewModel,
   pendingNotificationDeepLink: NotificationDeepLink?,
   onConsumeNotificationDeepLink: () -> Unit,
+  pendingIntroReelTarget: IntroReelPendingTarget? = null,
+  onConsumeIntroReelTarget: () -> Unit = {},
   onOpenAlemanCashPreview: (() -> Unit)? = null,
 ) {
   val context = LocalContext.current
@@ -654,6 +739,8 @@ private fun AuthenticatedAppRoot(
         cartOrderViewModel = cartOrderViewModel,
         pendingNotificationDeepLink = pendingNotificationDeepLink,
         onConsumeNotificationDeepLink = onConsumeNotificationDeepLink,
+        pendingIntroReelTarget = pendingIntroReelTarget,
+        onConsumeIntroReelTarget = onConsumeIntroReelTarget,
         onSignOut = handleSignOut,
         onRequestDeleteAccount = { startDeleteAccount(true) },
         onOpenAlemanCashPreview = onOpenAlemanCashPreview,
@@ -671,6 +758,8 @@ private fun AuthenticatedNavGraph(
   cartOrderViewModel: CartOrderViewModel,
   pendingNotificationDeepLink: NotificationDeepLink?,
   onConsumeNotificationDeepLink: () -> Unit,
+  pendingIntroReelTarget: IntroReelPendingTarget? = null,
+  onConsumeIntroReelTarget: () -> Unit = {},
   onSignOut: () -> Unit,
   onRequestDeleteAccount: () -> Unit,
   onOpenAlemanCashPreview: (() -> Unit)? = null,
@@ -684,21 +773,41 @@ private fun AuthenticatedNavGraph(
     factory = NotificationsViewModel.Factory(context, userProfile.uid),
   )
   val notificationsState by notificationsVm.uiState.collectAsStateWithLifecycle()
+  LaunchedEffect(uiState.effectivePermissions) {
+    notificationsVm.setStaffCapabilities(
+      canManagePayments = StaffPermission.MANAGE_PAYMENTS in uiState.effectivePermissions,
+      canManageOrders = StaffPermission.MANAGE_ORDERS in uiState.effectivePermissions,
+    )
+  }
   var openCartTrigger by rememberSaveable { mutableIntStateOf(0) }
   var openOffersTrigger by rememberSaveable { mutableIntStateOf(0) }
+  var openCategoryTrigger by rememberSaveable { mutableIntStateOf(0) }
+  var openCategoryTargetId by rememberSaveable { mutableStateOf<String?>(null) }
 
   fun routeFromNotification(typeCode: String, refId: String?) {
     val type = NotificationType.fromCode(typeCode)
     when (type) {
-      NotificationType.ORDER_STATUS, NotificationType.PAYMENT_STATUS -> {
+      NotificationType.PAYMENT_STATUS -> {
+        if (!refId.isNullOrBlank()) {
+          val hasManagePaymentsPerm = StaffPermission.MANAGE_PAYMENTS in uiState.effectivePermissions
+          val isOwnCustomerOrder = cartUiState.orders.any { it.id == refId }
+          if (hasManagePaymentsPerm && !isOwnCustomerOrder) {
+            navController.navigate(AppRoute.AdminPayments(focusOrderId = refId))
+          } else {
+            navController.navigate(AppRoute.OrderDetails(refId))
+          }
+        }
+      }
+      NotificationType.ORDER_STATUS -> {
         if (!refId.isNullOrBlank()) {
           val hasDeliverPerm = StaffPermission.DELIVER_ORDERS in uiState.effectivePermissions
+          val hasManageOrdersPerm = StaffPermission.MANAGE_ORDERS in uiState.effectivePermissions
           val isOwnCustomerOrder = cartUiState.orders.any { it.id == refId }
-          val isDriverOnly = uiState.staffMember?.staffRoleEnum == StaffRole.DELIVERY_DRIVER ||
-            (hasDeliverPerm && !isOwnCustomerOrder)
+          val isDriverOnly = (uiState.staffMember?.staffRoleEnum == StaffRole.DELIVERY_DRIVER || hasDeliverPerm) &&
+            !hasManageOrdersPerm && !isOwnCustomerOrder
           when {
             isDriverOnly -> navController.navigate(AppRoute.DeliveryDriverOrders(refId))
-            StaffPermission.MANAGE_ORDERS in uiState.effectivePermissions && !isOwnCustomerOrder ->
+            hasManageOrdersPerm && !isOwnCustomerOrder ->
               navController.navigate(AppRoute.AdminOrders)
             else -> navController.navigate(AppRoute.OrderDetails(refId))
           }
@@ -725,6 +834,31 @@ private fun AuthenticatedNavGraph(
     val deepLink = pendingNotificationDeepLink ?: return@LaunchedEffect
     routeFromNotification(deepLink.type, deepLink.referenceId)
     onConsumeNotificationDeepLink()
+  }
+
+  LaunchedEffect(pendingIntroReelTarget) {
+    val target = pendingIntroReelTarget ?: return@LaunchedEffect
+    when (target.targetType) {
+      IntroReelTargetType.CATEGORY -> {
+        if (target.targetId.isNotBlank()) {
+          openCategoryTargetId = target.targetId
+          openCategoryTrigger++
+          navController.popBackStack(AppRoute.CustomerShell, inclusive = false)
+        }
+      }
+      IntroReelTargetType.PRODUCT -> {
+        if (target.targetId.isNotBlank()) {
+          navController.navigate(AppRoute.ProductDetails(target.targetId))
+        }
+      }
+      IntroReelTargetType.COMPANY -> {
+        if (target.targetId.isNotBlank()) {
+          navController.navigate(AppRoute.BrandShowcase(target.targetId))
+        }
+      }
+      IntroReelTargetType.PROMO_ONLY -> Unit
+    }
+    onConsumeIntroReelTarget()
   }
 
   NavHost(
@@ -810,6 +944,8 @@ private fun AuthenticatedNavGraph(
           navController.navigate(AppRoute.BrandShowcase(showcaseId))
         },
         onLogZeroResultSearch = { catalogViewModel.logZeroResultSearch(it) },
+        openCategoryTrigger = openCategoryTrigger,
+        openCategoryTargetId = openCategoryTargetId,
       )
     }
 
@@ -1028,6 +1164,8 @@ private fun AuthenticatedNavGraph(
         onToggleWholesalePreview = { sessionViewModel.toggleWholesalePreview() },
         onBackClick = { navController.popBackStack() },
         onOpenBrandShowcases = { navController.navigate(AppRoute.AdminBrandShowcases) },
+        canViewCashTracking = uiState.canViewCashTracking,
+        onOpenCashTracking = { navController.navigate(AppRoute.AdminStoreSettings(initialTab = 1)) },
         onSelectSection = { permission ->
           when (permission) {
             StaffPermission.MANAGE_CATEGORIES -> navController.navigate(AppRoute.AdminCategories)
@@ -1036,7 +1174,7 @@ private fun AuthenticatedNavGraph(
             StaffPermission.MANAGE_CUSTOMERS, StaffPermission.APPROVE_WHOLESALE -> navController.navigate(AppRoute.AdminCustomers)
             StaffPermission.MANAGE_ORDERS -> navController.navigate(AppRoute.AdminOrders)
             StaffPermission.DELIVER_ORDERS -> navController.navigate(AppRoute.DeliveryDriverOrders())
-            StaffPermission.MANAGE_PAYMENTS -> navController.navigate(AppRoute.AdminPayments)
+            StaffPermission.MANAGE_PAYMENTS -> navController.navigate(AppRoute.AdminPayments())
             StaffPermission.MANAGE_DELIVERY -> navController.navigate(AppRoute.AdminDeliveryZones)
             StaffPermission.MANAGE_COUPONS -> navController.navigate(AppRoute.AdminCoupons)
             StaffPermission.MANAGE_INVENTORY -> navController.navigate(AppRoute.AdminInventory)
@@ -1045,7 +1183,7 @@ private fun AuthenticatedNavGraph(
             StaffPermission.MANAGE_FLASH_SALES -> navController.navigate(AppRoute.AdminFlashSales)
             StaffPermission.MANAGE_BANNERS -> navController.navigate(AppRoute.AdminBanners)
             StaffPermission.MANAGE_REVIEWS -> navController.navigate(AppRoute.AdminReviews)
-            StaffPermission.MANAGE_STORE_SETTINGS -> navController.navigate(AppRoute.AdminStoreSettings)
+            StaffPermission.MANAGE_STORE_SETTINGS -> navController.navigate(AppRoute.AdminStoreSettings())
             StaffPermission.PREVIEW_WHOLESALE_STORE -> sessionViewModel.toggleWholesalePreview()
           }
         },
@@ -1206,13 +1344,15 @@ private fun AuthenticatedNavGraph(
       )
     }
 
-    composable<AppRoute.AdminPayments> {
+    composable<AppRoute.AdminPayments> { backStackEntry ->
+      val route = backStackEntry.toRoute<AppRoute.AdminPayments>()
       val adminPaymentsVm: AdminPaymentsViewModel = viewModel(
         factory = AdminPaymentsViewModel.Factory(context),
       )
       val adminPaymentsState by adminPaymentsVm.uiState.collectAsStateWithLifecycle()
       AdminPaymentsScreen(
         uiState = adminPaymentsState,
+        focusOrderId = route.focusOrderId,
         onSelectPaymentFilter = { adminPaymentsVm.setPaymentStatusFilter(it) },
         onUpdatePaymentStatus = { orderId, pStatus, oStatus, note ->
           adminPaymentsVm.updatePaymentStatus(orderId, pStatus, oStatus, note)
@@ -1225,6 +1365,8 @@ private fun AuthenticatedNavGraph(
         onClearMessages = { adminPaymentsVm.clearMessages() },
         onBackClick = { navController.popBackStack() },
         onOpenAlemanCashPreview = onOpenAlemanCashPreview,
+        canViewCashTracking = uiState.canViewCashTracking,
+        onOpenCashTracking = { navController.navigate(AppRoute.AdminStoreSettings(initialTab = 1)) },
       )
     }
 
@@ -1315,11 +1457,22 @@ private fun AuthenticatedNavGraph(
       )
     }
 
-    composable<AppRoute.AdminStoreSettings> {
+    composable<AppRoute.AdminStoreSettings> { backStackEntry ->
+      val route = backStackEntry.toRoute<AppRoute.AdminStoreSettings>()
       val adminStoreVm: AdminStoreSettingsViewModel = viewModel(
         factory = AdminStoreSettingsViewModel.Factory(context),
       )
       val adminStoreState by adminStoreVm.uiState.collectAsStateWithLifecycle()
+      val cashTrackingVm: AdminCashTrackingViewModel = viewModel(
+        factory = AdminCashTrackingViewModel.Factory(context),
+      )
+      val cashTrackingState by cashTrackingVm.uiState.collectAsStateWithLifecycle()
+      val canEditStoreSettings = StaffPermission.MANAGE_STORE_SETTINGS in uiState.effectivePermissions
+      val canManageCashAccounts = StaffPermission.MANAGE_STORE_SETTINGS in uiState.effectivePermissions ||
+        StaffPermission.MANAGE_STAFF in uiState.effectivePermissions ||
+        StaffPermission.MANAGE_PAYMENTS in uiState.effectivePermissions
+      val actorDisplayName = userProfile.fullName.ifBlank { userProfile.email }
+
       AdminStoreSettingsScreen(
         uiState = adminStoreState,
         canManagePayments = StaffPermission.MANAGE_PAYMENTS in uiState.effectivePermissions,
@@ -1329,12 +1482,41 @@ private fun AuthenticatedNavGraph(
         onSendBroadcast = { title, message, onlyWholesale, type ->
           adminStoreVm.sendBroadcastNotification(title, message, onlyWholesale, type)
         },
-        onOpenPaymentSettings = { navController.navigate(AppRoute.AdminPayments) },
+        onOpenPaymentSettings = { navController.navigate(AppRoute.AdminPayments()) },
         onClearMessages = { adminStoreVm.clearMessages() },
         onBackClick = { navController.popBackStack() },
         canToggleWholesalePreview = uiState.canToggleWholesalePreview,
         isWholesalePreviewActive = uiState.effectiveWholesaleView,
         onToggleWholesalePreview = { sessionViewModel.toggleWholesalePreview() },
+        initialTab = route.initialTab,
+        canEditStoreSettings = canEditStoreSettings,
+        canManageCashAccounts = canManageCashAccounts,
+        canSettleCashDevice = uiState.canSettleCashDevice,
+        actorDisplayName = actorDisplayName,
+        cashTrackingUiState = cashTrackingState,
+        onSelectCashFilterMode = { cashTrackingVm.selectFilterMode(it) },
+        onSelectCashSingleDay = { cashTrackingVm.setSingleDay(it) },
+        onSelectCashDateRange = { startMs, endMs -> cashTrackingVm.setDateRange(startMs, endMs) },
+        onSaveCashAccount = { emailInput, deviceName, phoneNumber, isActive, isEdit ->
+          cashTrackingVm.saveCashVerifierAccount(
+            email = emailInput,
+            deviceName = deviceName,
+            phoneNumber = phoneNumber,
+            isActive = isActive,
+            isEditExisting = isEdit,
+          )
+        },
+        onToggleCashAccount = { cashTrackingVm.toggleAccountActive(it) },
+        onDeleteCashAccount = { cashTrackingVm.deleteAccount(it) },
+        onSettleCashDevice = { summary, actor, note ->
+          cashTrackingVm.settleAndResetDevice(summary, actor, note)
+        },
+        onExportCashExcelToUri = { uri -> cashTrackingVm.exportExcelToUri(context, uri) },
+        onShareCashExcel = { onReady -> cashTrackingVm.exportExcelForShare(context, onReady) },
+        onClearCashMessages = { cashTrackingVm.clearMessages() },
+        reelCategories = catalogState.categories,
+        reelProducts = catalogState.products,
+        reelBrandShowcases = catalogState.brandShowcases,
       )
     }
 

@@ -107,6 +107,22 @@ enum class IntroMediaType(val code: String, val arabicLabel: String) {
   }
 }
 
+enum class IntroReelTargetType(
+  val code: String,
+  val arabicLabel: String,
+  val subtitle: String,
+) {
+  PROMO_ONLY("promo_only", "ريلز دعائي فقط", "بدون تحويل عند الضغط على المقطع"),
+  CATEGORY("category", "قسم معين", "فتح قسم محدد عند الضغط على المقطع"),
+  PRODUCT("product", "منتج معين", "فتح صفحة منتج محدد عند الضغط"),
+  COMPANY("company", "منتجات شركة", "عرض منتجات شركة محددة عند الضغط");
+
+  companion object {
+    fun fromCode(code: String?): IntroReelTargetType =
+      entries.firstOrNull { it.code == code } ?: PROMO_ONLY
+  }
+}
+
 enum class AppIconTheme(
   val code: String,
   val arabicLabel: String,
@@ -543,6 +559,9 @@ data class StoreGeneralSettings(
   val introVideoDurationSeconds: Int = 0,
   val introVideoTitle: String = "",
   val introVideoMuted: Boolean = false,
+  val introReelTargetType: String = IntroReelTargetType.PROMO_ONLY.code,
+  val introReelTargetId: String = "",
+  val introReelTargetLabel: String = "",
   val tickerEnabled: Boolean = false,
   val tickerText: String = "",
   val tickerPlacement: String = BannerPlacement.TOP_HOME.code,
@@ -624,6 +643,15 @@ data class StoreGeneralSettings(
   @get:Exclude
   val safeIntroVideoDurationSeconds: Int
     get() = introVideoDurationSeconds.coerceIn(0, 120)
+
+  @get:Exclude
+  val introReelTargetTypeEnum: IntroReelTargetType
+    get() = IntroReelTargetType.fromCode(introReelTargetType)
+
+  @get:Exclude
+  val hasInteractiveIntroReelTarget: Boolean
+    get() = introReelTargetTypeEnum != IntroReelTargetType.PROMO_ONLY &&
+      introReelTargetId.trim().isNotEmpty()
   @get:Exclude
   val homeCategoryStyleEnum: HomeCategoryStyle
     get() = HomeCategoryStyle.fromCode(homeCategoryStyle)
@@ -757,12 +785,56 @@ data class CashVerificationLog(
   val amount: Double = 0.0,
   val matchedOrderId: String? = null,
   val matchedOrderNumber: String? = null,
+  val verifiedByDeviceName: String = "",
+  val verifiedByEmail: String = "",
+  @get:PropertyName("isSettled") @PropertyName("isSettled")
+  val isSettled: Boolean = false,
+  val withdrawalId: String? = null,
+  val settledAt: Timestamp? = null,
   val status: String = "unmatched",
   val reason: String = "",
   val rawBodyPreview: String = "",
   val verifiedByUid: String = "",
   @ServerTimestamp val createdAt: Timestamp? = null,
+) {
+  @get:Exclude
+  val isVerifiedOperation: Boolean
+    get() = status == "verified" || status == "matched"
+}
+
+@Keep
+@IgnoreExtraProperties
+data class CashVerifierAccount(
+  @DocumentId val id: String = "",
+  val email: String = "",
+  val deviceName: String = "",
+  val phoneNumber: String? = null,
+  @get:PropertyName("isActive") @PropertyName("isActive")
+  val isActive: Boolean = true,
+  val lastResetAt: Timestamp? = null,
+  val lastResetByName: String? = null,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+  @ServerTimestamp val updatedAt: Timestamp? = null,
 )
+
+@Keep
+@IgnoreExtraProperties
+data class CashWithdrawalRecord(
+  @DocumentId val id: String = "",
+  val deviceKey: String = "",
+  val deviceName: String = "",
+  val deviceEmail: String = "",
+  val withdrawnAmount: Double = 0.0,
+  val operationsCount: Int = 0,
+  val withdrawnByUid: String = "",
+  val withdrawnByName: String = "",
+  val withdrawnByEmail: String = "",
+  val note: String? = null,
+  @ServerTimestamp val createdAt: Timestamp? = null,
+)
+
+fun buildCashAccountDocId(email: String): String =
+  email.trim().lowercase().replace(Regex("[^a-z0-9_-]"), "_")
 
 @Keep
 @IgnoreExtraProperties

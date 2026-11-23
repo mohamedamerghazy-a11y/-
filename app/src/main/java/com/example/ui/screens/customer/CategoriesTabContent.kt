@@ -105,9 +105,15 @@ fun CategoriesTabContent(
   onToggleWishlist: (String) -> Unit = {},
 ) {
   val mainCategories = catalogState.mainCategories
-  val activeMainCategory = selectedMainCategoryId?.let { id ->
-    mainCategories.firstOrNull { it.id == id }
+  val matchedSelectedCategory = selectedMainCategoryId?.let { id ->
+    catalogState.categories.firstOrNull { it.id == id }
   }
+  val activeMainCategory = when {
+    matchedSelectedCategory == null -> null
+    matchedSelectedCategory.isMainCategory -> matchedSelectedCategory
+    else -> mainCategories.firstOrNull { it.id == matchedSelectedCategory.parentId }
+  }
+  val initialSubCategoryId = matchedSelectedCategory?.takeUnless { it.isMainCategory }?.id
   val displayStyle = catalogState.storeSettings.categoriesTabStyleEnum
 
   if (mainCategories.isEmpty()) {
@@ -152,6 +158,7 @@ fun CategoriesTabContent(
       catalogState = catalogState,
       mainCategories = mainCategories,
       activeMainCategory = activeMainCategory,
+      initialSubCategoryId = initialSubCategoryId,
       isWholesaleApproved = isWholesaleApproved,
       onSelectMainCategory = onSelectMainCategory,
       onBackToAllCategories = { onSelectMainCategory(null) },
@@ -385,6 +392,7 @@ private fun CategoryProductsDetailContent(
   catalogState: CatalogUiState,
   mainCategories: List<Category>,
   activeMainCategory: Category,
+  initialSubCategoryId: String? = null,
   isWholesaleApproved: Boolean,
   onSelectMainCategory: (String?) -> Unit,
   onBackToAllCategories: () -> Unit,
@@ -393,7 +401,9 @@ private fun CategoryProductsDetailContent(
   onToggleWishlist: (String) -> Unit,
 ) {
   val activeMainId = activeMainCategory.id
-  var selectedSubCategoryId by rememberSaveable(activeMainId) { mutableStateOf<String?>(null) }
+  var selectedSubCategoryId by rememberSaveable(activeMainId, initialSubCategoryId) {
+    mutableStateOf(initialSubCategoryId)
+  }
   val subCategories = catalogState.subCategoriesFor(activeMainId)
   val displayedProducts = catalogState.storefrontProducts.filter { product ->
     product.categoryId == activeMainId &&
